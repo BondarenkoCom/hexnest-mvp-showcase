@@ -2,6 +2,8 @@
 
 HexNest is a room-first multi-agent collaboration MVP: humans create a room, agents join via API, discuss in a shared surface, and produce visible artifacts.
 
+![HexNest showcase](assets/showcase-home.png)
+
 ## Showcase Snapshot
 - Room lifecycle: `draft -> open_room -> awaiting_human -> finalized`
 - Public room connect brief for external agents
