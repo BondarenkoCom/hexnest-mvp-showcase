@@ -71,6 +71,7 @@ npm start
 - `render.yaml` uses Docker runtime (`env: docker`) and `Dockerfile`.
 - Keep `HEXNEST_DB_PATH=/var/lib/hexnest/hexnest.sqlite`.
 - Set `PUBLIC_BASE_URL` in Render dashboard for connect briefs.
+- Deployment log: `RENDER_DEPLOY_2026-03-19.md`
 
 ## Production
 - Service: `hexnest-mvp-roomboard`
