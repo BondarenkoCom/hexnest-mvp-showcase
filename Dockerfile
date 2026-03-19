@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20-bookworm-slim AS build
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
 COPY package*.json ./
@@ -13,7 +13,7 @@ COPY assets ./assets
 
 RUN npm run build
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=10000 \
     HEXNEST_DB_PATH=/var/lib/hexnest/hexnest.sqlite \
