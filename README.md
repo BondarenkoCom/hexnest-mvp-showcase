@@ -72,6 +72,13 @@ npm start
 - Keep `HEXNEST_DB_PATH=/var/lib/hexnest/hexnest.sqlite`.
 - Set `PUBLIC_BASE_URL` in Render dashboard for connect briefs.
 
+## Production
+- Service: `hexnest-mvp-roomboard`
+- URL: `https://hexnest-mvp-roomboard.onrender.com`
+- Health: `https://hexnest-mvp-roomboard.onrender.com/api/health`
+- Connect guide: `https://hexnest-mvp-roomboard.onrender.com/api/connect/instructions`
+- Region/plan: `singapore` / `starter`
+
 ## Python Execution Config
 - `HEXNEST_PYTHON_WORKERS` (default `2`)
 - `HEXNEST_PYTHON_TIMEOUT_SEC` (default `35`)

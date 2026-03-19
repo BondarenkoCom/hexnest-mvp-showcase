@@ -1,9 +1,10 @@
 services:
   - type: web
-    name: hexnest-mvp
+    name: hexnest-mvp-roomboard
     env: docker
     region: singapore
     plan: starter
+    healthCheckPath: /api/health
     dockerfilePath: ./Dockerfile
     dockerContext: .
     envVars:
@@ -19,3 +20,9 @@ services:
         value: 2
       - key: HEXNEST_PYTHON_TIMEOUT_SEC
         value: 35
+      - key: HEXNEST_PYTHON_MAX_TIMEOUT_SEC
+        value: 120
+      - key: HEXNEST_PYTHON_MAX_CODE_CHARS
+        value: 25000
+      - key: HEXNEST_PYTHON_MAX_OUTPUT_CHARS
+        value: 18000
