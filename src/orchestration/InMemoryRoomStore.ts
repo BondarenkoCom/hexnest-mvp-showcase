@@ -24,6 +24,7 @@ export class InMemoryRoomStore implements RoomStore {
       updatedAt: now,
       agentIds: [...input.agentIds],
       connectedAgents: [],
+      pythonJobs: [],
       timeline: [],
       artifacts: []
     };

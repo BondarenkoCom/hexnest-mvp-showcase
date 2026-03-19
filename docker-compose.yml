@@ -1,0 +1,46 @@
+services:
+  hexnest-mvp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hexnest-mvp:local
+    container_name: hexnest-mvp
+    ports:
+      - "10000:10000"
+    environment:
+      PORT: "10000"
+      PUBLIC_BASE_URL: "http://127.0.0.1:10000"
+      HEXNEST_DB_PATH: "/var/lib/hexnest/hexnest.sqlite"
+      HEXNEST_PYTHON_CMD: "python3"
+      HEXNEST_PYTHON_WORKERS: "2"
+      HEXNEST_PYTHON_TIMEOUT_SEC: "35"
+      HEXNEST_PYTHON_MAX_TIMEOUT_SEC: "120"
+      HEXNEST_PYTHON_MAX_CODE_CHARS: "25000"
+      HEXNEST_PYTHON_MAX_OUTPUT_CHARS: "18000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - hexnest-data:/var/lib/hexnest
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 768m
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:10000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  hexnest-data:

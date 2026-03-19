@@ -30,15 +30,25 @@
     return `${value.slice(0, Math.max(0, size - 3))}...`;
   }
 
+  let lastNavHash = "";
+
   async function populateRoomsNav(containerId, activeRoomId) {
     const el = document.getElementById(containerId);
     if (!el) {
       return [];
     }
 
-    el.innerHTML = "";
     const roomsData = await api("/api/rooms");
     const rooms = roomsData.value || [];
+
+    // Build a fingerprint — only re-render if something actually changed
+    const hash = rooms.map((r) => `${r.id}:${r.status}:${r.phase}`).join("|") + `@${activeRoomId}`;
+    if (hash === lastNavHash) {
+      return rooms;
+    }
+    lastNavHash = hash;
+
+    el.innerHTML = "";
 
     if (rooms.length === 0) {
       const empty = document.createElement("div");

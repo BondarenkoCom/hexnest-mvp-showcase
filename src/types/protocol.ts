@@ -15,6 +15,7 @@ export type RoomPhase =
   | "human_gate";
 
 export type RoomStatus = "open" | "draft" | "running" | "awaiting_human" | "finalized";
+export type MessageScope = "room" | "direct";
 
 export interface Artifact {
   id: string;
@@ -30,6 +31,8 @@ export interface AgentEnvelope {
   message_type: MessageType;
   from_agent: string;
   to_agent: string | "room";
+  scope: MessageScope;
+  triggered_by: string | null;
   task_id: string;
   intent: string;
   artifacts: string[];
@@ -57,6 +60,32 @@ export interface ConnectedAgent {
   joinedAt: string;
 }
 
+export type PythonJobStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "timeout"
+  | "rejected";
+
+export interface PythonJob {
+  id: string;
+  roomId: string;
+  agentId: string;
+  agentName: string;
+  status: PythonJobStatus;
+  code: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  timeoutSec: number;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+  outputTruncated?: boolean;
+}
+
 export interface RoomSnapshot {
   id: string;
   name: string;
@@ -71,6 +100,7 @@ export interface RoomSnapshot {
   updatedAt: string;
   agentIds: string[];
   connectedAgents: ConnectedAgent[];
+  pythonJobs: PythonJob[];
   timeline: RoomEvent[];
   artifacts: Artifact[];
   finalOutput?: string;

@@ -99,6 +99,7 @@ export class SQLiteRoomStore implements RoomStore {
       updatedAt: now,
       agentIds: [...input.agentIds],
       connectedAgents: [],
+      pythonJobs: [],
       timeline: [],
       artifacts: []
     };
@@ -158,6 +159,17 @@ export class SQLiteRoomStore implements RoomStore {
     if (!room.timeline) {
       room.timeline = [];
     }
+    for (const event of room.timeline) {
+      if (!event?.envelope) {
+        continue;
+      }
+      if (event.envelope.scope !== "room" && event.envelope.scope !== "direct") {
+        event.envelope.scope = event.envelope.to_agent === "room" ? "room" : "direct";
+      }
+      if (typeof event.envelope.triggered_by !== "string" || event.envelope.triggered_by.length === 0) {
+        event.envelope.triggered_by = null;
+      }
+    }
     if (!room.artifacts) {
       room.artifacts = [];
     }
@@ -166,6 +178,9 @@ export class SQLiteRoomStore implements RoomStore {
     }
     if (!room.connectedAgents) {
       room.connectedAgents = [];
+    }
+    if (!room.pythonJobs) {
+      room.pythonJobs = [];
     }
     return room;
   }

@@ -10,17 +10,9 @@ const roomMetaEl = document.getElementById("roomMeta");
 const liveTimelineEl = document.getElementById("liveTimeline");
 const artifactListEl = document.getElementById("artifactList");
 const refreshRoomBtn = document.getElementById("refreshRoomBtn");
-const roomSurfaceEl = document.getElementById("roomSurface");
-const liveChatWindowEl = document.getElementById("liveChatWindow");
-const chatDragHandleEl = document.getElementById("chatDragHandle");
-
-const joinAgentNameEl = document.getElementById("joinAgentName");
-const joinAgentOwnerEl = document.getElementById("joinAgentOwner");
-const joinAgentEndpointEl = document.getElementById("joinAgentEndpoint");
-const joinAgentNoteEl = document.getElementById("joinAgentNote");
-const joinAgentBtn = document.getElementById("joinAgentBtn");
-const joinMetaEl = document.getElementById("joinMeta");
+const copyBriefBtn = document.getElementById("copyBriefBtn");
 const joinedAgentListEl = document.getElementById("joinedAgentList");
+const pythonJobsListEl = document.getElementById("pythonJobsList");
 
 const roomId = getQueryParam("roomId");
 
@@ -31,13 +23,56 @@ let pollTimer = null;
 
 init().catch(handleError);
 
-refreshRoomBtn.addEventListener("click", async () => {
+refreshRoomBtn?.addEventListener("click", async () => {
   await refreshRoom();
 });
 
-joinAgentBtn.addEventListener("click", async () => {
-  await joinAgentToRoom();
+copyBriefBtn?.addEventListener("click", () => {
+  const text = roomConnectBriefEl?.textContent || "";
+  navigator.clipboard.writeText(text).then(() => {
+    copyBriefBtn.textContent = "Copied!";
+    copyBriefBtn.classList.add("copied");
+    setTimeout(() => {
+      copyBriefBtn.textContent = "Copy";
+      copyBriefBtn.classList.remove("copied");
+    }, 1800);
+  });
 });
+
+// Drawer open/close logic
+const drawerOverlay = document.getElementById("drawerOverlay");
+
+function openDrawer(id) {
+  closeAllDrawers();
+  const drawer = document.getElementById(id);
+  if (!drawer) return;
+  drawer.classList.add("open");
+  drawerOverlay.classList.add("active");
+}
+
+function closeAllDrawers() {
+  document.querySelectorAll(".drawer.open").forEach((d) => d.classList.remove("open"));
+  drawerOverlay.classList.remove("active");
+}
+
+document.querySelectorAll(".btn-drawer-trigger").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const drawerId = btn.getAttribute("data-drawer");
+    if (!drawerId) return;
+    const drawer = document.getElementById(drawerId);
+    if (drawer && drawer.classList.contains("open")) {
+      closeAllDrawers();
+    } else {
+      openDrawer(drawerId);
+    }
+  });
+});
+
+document.querySelectorAll(".btn-drawer-close").forEach((btn) => {
+  btn.addEventListener("click", () => closeAllDrawers());
+});
+
+drawerOverlay.addEventListener("click", () => closeAllDrawers());
 
 window.addEventListener("beforeunload", () => {
   if (pollTimer) {
@@ -53,11 +88,8 @@ async function init() {
     setMeta("Missing roomId in URL.");
     return;
   }
-
-  makeChatWindowDraggable();
   await populateRoomsNav("roomNavList", roomId);
   await refreshRoom();
-
   pollTimer = window.setInterval(async () => {
     await refreshRoom(false);
   }, 2200);
@@ -69,60 +101,24 @@ async function refreshRoom(showMeta = true) {
       api(`/api/rooms/${encodeURIComponent(roomId)}`),
       api(`/api/rooms/${encodeURIComponent(roomId)}/connect`)
     ]);
+
     renderRoomHeader(room);
     renderRoomBrief(brief);
     ingestTimeline(room.timeline || []);
     renderArtifacts(room.artifacts || []);
     renderJoinedAgents(room.connectedAgents || []);
+    renderPythonJobs(room.pythonJobs || []);
     await populateRoomsNav("roomNavList", roomId);
 
     if (showMeta) {
       setMeta(
         `Room ${room.id} is ${room.settings?.isPublic ? "public" : "private"} | agents: ${
           (room.connectedAgents || []).length
-        }`
+        } | python jobs: ${(room.pythonJobs || []).length}`
       );
     }
   } catch (error) {
     handleError(error);
-  }
-}
-
-async function joinAgentToRoom() {
-  try {
-    if (!roomId) {
-      return;
-    }
-    const name = joinAgentNameEl.value.trim();
-    const owner = joinAgentOwnerEl.value.trim();
-    const endpointUrl = joinAgentEndpointEl.value.trim();
-    const note = joinAgentNoteEl.value.trim();
-
-    if (!name) {
-      setJoinMeta("Agent name is required.");
-      return;
-    }
-
-    setJoinMeta("Joining agent...");
-    const result = await api(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
-      method: "POST",
-      body: JSON.stringify({
-        name,
-        owner,
-        endpointUrl,
-        note
-      })
-    });
-
-    setJoinMeta(`Agent joined: ${result.joinedAgent.name}`);
-    joinAgentNameEl.value = "";
-    joinAgentOwnerEl.value = "";
-    joinAgentEndpointEl.value = "";
-    joinAgentNoteEl.value = "";
-    await refreshRoom();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    setJoinMeta(`Error: ${message}`);
   }
 }
 
@@ -159,7 +155,7 @@ function startEventReplay() {
       return;
     }
     appendTimelineCard(next);
-  }, 450);
+  }, 420);
 }
 
 function appendTimelineCard(item) {
@@ -168,10 +164,15 @@ function appendTimelineCard(item) {
   card.className = `chat-line ${phaseClass}`;
 
   const envelope = item.envelope || {};
+  const triggeredBy = envelope.triggered_by
+    ? String(envelope.triggered_by).slice(0, 12)
+    : "null";
   card.innerHTML = `
     <p class="line-title">>> [${escapeHtml(item.phase || "phase")}]
 ${escapeHtml(envelope.from_agent || "agent")} -> ${escapeHtml(envelope.to_agent || "room")}</p>
     <p class="line-body">intent=${escapeHtml(envelope.intent || "intent")}
+scope=${escapeHtml(envelope.scope || "room")}
+triggered_by=${escapeHtml(triggeredBy)}
 confidence=${escapeHtml(String(envelope.confidence ?? ""))}
 need_human=${escapeHtml(String(envelope.need_human ?? false))}
 ${escapeHtml(envelope.explanation || "")}</p>
@@ -227,6 +228,33 @@ joinedAt=${escapeHtml(agent.joinedAt || "-")}</p>
   });
 }
 
+function renderPythonJobs(jobs) {
+  pythonJobsListEl.innerHTML = "";
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "room-empty";
+    empty.textContent = "No Python jobs yet.";
+    pythonJobsListEl.appendChild(empty);
+    return;
+  }
+
+  jobs.forEach((job) => {
+    const card = document.createElement("div");
+    card.className = "joined-agent-card";
+    card.innerHTML = `
+      <p class="line-title">${escapeHtml(job.agentName)} | python job ${escapeHtml(
+        String(job.id || "").slice(0, 8)
+      )}</p>
+      <p class="line-body">status=${escapeHtml(job.status || "")}
+timeoutSec=${escapeHtml(String(job.timeoutSec ?? ""))}
+exitCode=${escapeHtml(String(job.exitCode ?? ""))}
+startedAt=${escapeHtml(job.startedAt || "-")}
+finishedAt=${escapeHtml(job.finishedAt || "-")}</p>
+    `;
+    pythonJobsListEl.appendChild(card);
+  });
+}
+
 function renderRoomHeader(room) {
   roomTitleEl.textContent = room.name || `Room ${room.id.slice(0, 8)}`;
   roomTaskTextEl.textContent = room.task || "";
@@ -238,23 +266,34 @@ function renderRoomHeader(room) {
 }
 
 function renderRoomBrief(brief) {
+  const hasDirectSample = Boolean(brief.sampleDirectMessagePayload);
   const lines = [
-    `ROOM NAME: ${brief.roomName}`,
-    `ROOM ID: ${brief.roomId}`,
-    `PUBLIC: ${brief.isPublic ? "yes" : "no"}`,
-    `TASK: ${brief.task}`,
+    brief.agentInstructions || "",
     "",
-    `Open this room page:`,
-    `${brief.roomPageUrl}`,
+    `PYTHON: ${brief.pythonNote || ""}`,
     "",
-    `JOIN AGENT API: ${brief.joinAgentApi}`,
-    `POST MESSAGE API: ${brief.postMessageApi}`,
+    "=== ENDPOINTS ===",
+    `Room page: ${brief.roomPageUrl}`,
+    `GET room state: ${brief.roomApi}`,
+    `POST join agent: ${brief.joinAgentApi}`,
+    `POST send message: ${brief.postMessageApi}`,
+    `POST python job: ${brief.pythonJobsApi}`,
     "",
-    "JOIN PAYLOAD:",
-    JSON.stringify(brief.sampleJoinPayload, null, 2),
+    "=== JOIN PAYLOAD ===",
+    JSON.stringify(brief.sampleJoinPayload || {}, null, 2),
     "",
-    "MESSAGE PAYLOAD:",
-    JSON.stringify(brief.sampleMessagePayload, null, 2)
+    "=== MESSAGE PAYLOAD ===",
+    JSON.stringify(brief.sampleMessagePayload || {}, null, 2),
+    "",
+    "=== DIRECT MESSAGE PAYLOAD ===",
+    hasDirectSample
+      ? JSON.stringify(brief.sampleDirectMessagePayload, null, 2)
+      : "{ \"scope\": \"direct\", \"toAgentName\": \"...\", \"triggeredBy\": \"<messageId>\" }",
+    "",
+    "=== PYTHON JOB PAYLOAD ===",
+    JSON.stringify(brief.samplePythonPayload || {}, null, 2),
+    "",
+    "IMPORTANT: if task requires calculations/simulations, use Python Job API."
   ];
   roomConnectBriefEl.textContent = lines.join("\n");
 }
@@ -263,60 +302,7 @@ function setMeta(text) {
   roomMetaEl.textContent = text;
 }
 
-function setJoinMeta(text) {
-  joinMetaEl.textContent = text;
-}
-
 function handleError(error) {
   const message = error instanceof Error ? error.message : String(error);
   setMeta(`Error: ${message}`);
-}
-
-function makeChatWindowDraggable() {
-  if (!liveChatWindowEl || !chatDragHandleEl || !roomSurfaceEl) {
-    return;
-  }
-  if (window.matchMedia("(max-width: 980px)").matches) {
-    return;
-  }
-
-  let dragging = false;
-  let offsetX = 0;
-  let offsetY = 0;
-
-  chatDragHandleEl.addEventListener("pointerdown", (event) => {
-    dragging = true;
-    const chatRect = liveChatWindowEl.getBoundingClientRect();
-    offsetX = event.clientX - chatRect.left;
-    offsetY = event.clientY - chatRect.top;
-    chatDragHandleEl.setPointerCapture(event.pointerId);
-  });
-
-  chatDragHandleEl.addEventListener("pointermove", (event) => {
-    if (!dragging) {
-      return;
-    }
-    const bounds = roomSurfaceEl.getBoundingClientRect();
-    const width = liveChatWindowEl.offsetWidth;
-    const height = liveChatWindowEl.offsetHeight;
-
-    let nextLeft = event.clientX - bounds.left - offsetX;
-    let nextTop = event.clientY - bounds.top - offsetY;
-    nextLeft = clamp(nextLeft, 0, Math.max(0, bounds.width - width));
-    nextTop = clamp(nextTop, 0, Math.max(0, bounds.height - height));
-
-    liveChatWindowEl.style.left = `${nextLeft}px`;
-    liveChatWindowEl.style.top = `${nextTop}px`;
-    liveChatWindowEl.style.right = "auto";
-  });
-
-  function releaseDrag() {
-    dragging = false;
-  }
-  chatDragHandleEl.addEventListener("pointerup", releaseDrag);
-  chatDragHandleEl.addEventListener("pointercancel", releaseDrag);
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
 }

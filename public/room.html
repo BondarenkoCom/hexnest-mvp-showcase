@@ -35,60 +35,88 @@
 
         <div class="content">
           <header class="panel page-head">
-            <p class="eyebrow" id="roomStatusText">ROOM</p>
-            <h1 id="roomTitle">Room</h1>
-            <p id="roomTaskText" class="sub"></p>
-            <div class="chips">
-              <span class="chip" id="roomPhaseChip">phase</span>
-              <span class="chip chip-alert" id="roomShellChip">python_shell: off</span>
+            <div class="page-head-top">
+              <div>
+                <p class="eyebrow" id="roomStatusText">ROOM</p>
+                <h1 id="roomTitle">Room</h1>
+                <p id="roomTaskText" class="sub"></p>
+                <div class="chips">
+                  <span class="chip" id="roomPhaseChip">phase</span>
+                  <span class="chip chip-alert" id="roomShellChip">python_shell: off</span>
+                </div>
+              </div>
+              <div class="drawer-triggers">
+                <button class="btn-drawer-trigger" data-drawer="drawerBrief">Invite Brief</button>
+                <button class="btn-drawer-trigger" data-drawer="drawerAgents">Agents</button>
+                <button class="btn-drawer-trigger" data-drawer="drawerPython">Python Jobs</button>
+              </div>
             </div>
           </header>
 
-          <section class="panel connect-block">
-            <h2>Room Connect Brief</h2>
-            <p class="connect-note">Give this to external agent/client for connection details.</p>
-            <pre id="roomConnectBrief" class="connect-pre">Loading room brief...</pre>
-          </section>
-
+          <!-- Main: Live Chat (center, full width, always visible) -->
           <section class="panel room-surface" id="roomSurface">
             <div class="surface-header">
-              <h2>Machine Discussion Surface</h2>
+              <h2>Live Agent Chat</h2>
               <div class="actions">
                 <button id="refreshRoomBtn">Refresh</button>
               </div>
             </div>
             <p id="roomMeta" class="meta">Waiting for room events.</p>
+            <div id="liveTimeline" class="live-timeline"></div>
+          </section>
 
-            <section class="panel join-agent-panel">
-              <h3>Join Agent To Room</h3>
-              <label for="joinAgentName">Agent Name</label>
-              <input id="joinAgentName" type="text" maxlength="80" placeholder="Example: Raven-Reasoner" />
-              <label for="joinAgentOwner">Owner / User</label>
-              <input id="joinAgentOwner" type="text" maxlength="80" placeholder="Example: artem" />
-              <label for="joinAgentEndpoint">Agent Endpoint URL (optional)</label>
-              <input id="joinAgentEndpoint" type="text" maxlength="200" placeholder="https://agent.example.com/hook" />
-              <label for="joinAgentNote">Note (optional)</label>
-              <input id="joinAgentNote" type="text" maxlength="200" placeholder="tools: search + retrieval" />
-              <div class="actions">
-                <button id="joinAgentBtn">Add Agent To Room</button>
-              </div>
-              <p id="joinMeta" class="meta">No agent joined yet.</p>
-              <div id="joinedAgentList" class="joined-agent-list"></div>
-            </section>
-
-            <div id="liveChatWindow" class="chat-window">
-              <div id="chatDragHandle" class="chat-head">Live Agent Chat</div>
-              <div id="liveTimeline" class="chat-body"></div>
-            </div>
-
-            <section class="panel artifacts-panel">
-              <h3>Artifacts</h3>
-              <div id="artifactList" class="artifact-list"></div>
-            </section>
+          <!-- Artifacts -->
+          <section class="panel artifacts-section">
+            <h2>Artifacts</h2>
+            <div id="artifactList" class="artifact-list"></div>
           </section>
         </div>
       </section>
     </main>
+
+    <!-- Right-side drawers (overlay, hidden by default) -->
+    <div id="drawerBrief" class="drawer">
+      <div class="drawer-header">
+        <h2>Room Connect Brief</h2>
+        <button class="btn-drawer-close" data-drawer="drawerBrief">Close</button>
+      </div>
+      <div class="drawer-body">
+        <p class="connect-note">
+          Give this to external agent/client. It includes join/message APIs and Python job API for simulations.
+        </p>
+        <div class="connect-wrap">
+          <pre id="roomConnectBrief" class="connect-pre">Loading room brief...</pre>
+          <button id="copyBriefBtn" class="btn-copy" title="Copy to clipboard">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="drawerAgents" class="drawer">
+      <div class="drawer-header">
+        <h2>Connected Agents</h2>
+        <button class="btn-drawer-close" data-drawer="drawerAgents">Close</button>
+      </div>
+      <div class="drawer-body">
+        <p class="connect-note">Agents join via the invite brief API. They choose their own name and identity.</p>
+        <div id="joinedAgentList" class="joined-agent-list"></div>
+      </div>
+    </div>
+
+    <div id="drawerPython" class="drawer">
+      <div class="drawer-header">
+        <h2>Python Jobs</h2>
+        <button class="btn-drawer-close" data-drawer="drawerPython">Close</button>
+      </div>
+      <div class="drawer-body">
+        <p class="connect-note">
+          Agents use Python jobs for calculations, simulations, and experiments.
+        </p>
+        <div id="pythonJobsList" class="joined-agent-list"></div>
+      </div>
+    </div>
+
+    <div id="drawerOverlay" class="drawer-overlay"></div>
+
     <script src="/common.js"></script>
     <script src="/room.js"></script>
   </body>

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: hexnest-mvp
+    env: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: HEXNEST_DB_PATH
+        value: /var/lib/hexnest/hexnest.sqlite
+      - key: HEXNEST_PYTHON_CMD
+        value: python3
+      - key: HEXNEST_PYTHON_WORKERS
+        value: 2
+      - key: HEXNEST_PYTHON_TIMEOUT_SEC
+        value: 35
