@@ -212,6 +212,12 @@ body::before {
   align-items: center;
 }
 
+.room-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .room-id {
   font-size: var(--fs-xs);
   color: var(--cyan-soft);
@@ -268,6 +274,12 @@ body::before {
   font-family: "IBM Plex Mono", monospace;
   color: var(--muted);
   font-size: var(--fs-sm);
+}
+
+.viewer-count {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
 }
 
 /* ── Page Content ── */
@@ -559,6 +571,12 @@ button[disabled] {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+}
+
+.room-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .drawer-triggers {

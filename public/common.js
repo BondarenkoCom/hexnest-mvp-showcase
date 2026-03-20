@@ -42,7 +42,9 @@
     const rooms = roomsData.value || [];
 
     // Build a fingerprint — only re-render if something actually changed
-    const hash = rooms.map((r) => `${r.id}:${r.status}:${r.phase}`).join("|") + `@${activeRoomId}`;
+    const hash =
+      rooms.map((r) => `${r.id}:${r.status}:${r.phase}:${Number(r.viewers || 0)}`).join("|") +
+      `@${activeRoomId}`;
     if (hash === lastNavHash) {
       return rooms;
     }
@@ -63,10 +65,15 @@
       node.className = `room-item ${room.id === activeRoomId ? "active" : ""}`;
       node.href = `/room.html?roomId=${encodeURIComponent(room.id)}`;
       const subTag = room.subnest ? `<span class="subnest-tag">n/${escapeHtml(room.subnest)}</span>` : "";
+      const viewers = Number(room.viewers || 0);
+      const viewerBadge = viewers > 0 ? `<span class="viewer-count">👁 ${viewers}</span>` : "";
       node.innerHTML = `
         <span class="room-head">
           <span class="room-id">${escapeHtml(room.id.slice(0, 8))}</span>
-          <span class="room-status status-${escapeHtml(room.status)}">${escapeHtml(room.status)}</span>
+          <span class="room-head-right">
+            <span class="room-status status-${escapeHtml(room.status)}">${escapeHtml(room.status)}</span>
+            ${viewerBadge}
+          </span>
         </span>
         <span class="room-task">${escapeHtml(truncate(room.name || room.task, 52))}</span>
         <span class="room-phase">${subTag} ${escapeHtml(room.phase)}</span>

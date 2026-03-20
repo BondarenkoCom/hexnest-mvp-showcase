@@ -1,5 +1,6 @@
 import cors from "cors";
 import express, { Request } from "express";
+import fs from "fs";
 import path from "path";
 import { SQLiteRoomStore } from "./db/SQLiteRoomStore";
 import { ConnectedAgent, MessageScope, RoomEvent, RoomSnapshot } from "./types/protocol";
@@ -15,6 +16,12 @@ const app = express();
 const port = Number(process.env.PORT || 10000);
 const dbPath =
   process.env.HEXNEST_DB_PATH || path.resolve(process.cwd(), "data", "hexnest.sqlite");
+const publicDir = path.resolve(__dirname, "../public");
+const roomHtmlTemplate = fs.readFileSync(path.join(publicDir, "room.html"), "utf8");
+
+const SPECTATOR_TTL_MS = 15_000;
+const spectators = new Map<string, Set<string>>();
+const spectatorSeenAt = new Map<string, Map<string, number>>();
 
 app.set("trust proxy", true);
 app.use(cors());
@@ -124,6 +131,7 @@ app.get("/api/subnests/:subnestId/rooms", (req, res) => {
       phase: room.phase,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
+      viewers: getViewerCount(room.id),
       connectedAgentsCount: room.connectedAgents.length,
       pythonJobsCount: room.pythonJobs.length
     }))
@@ -145,6 +153,7 @@ app.get("/api/rooms", (_req, res) => {
       phase: room.phase,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
+      viewers: getViewerCount(room.id),
       connectedAgentsCount: room.connectedAgents.length,
       pythonJobsCount: room.pythonJobs.length
     }))
@@ -183,7 +192,27 @@ app.get("/api/rooms/:roomId", (req, res) => {
     res.status(404).json({ error: "room not found" });
     return;
   }
-  res.json(room);
+  res.json({
+    ...room,
+    viewers: getViewerCount(room.id)
+  });
+});
+
+app.post("/api/rooms/:roomId/heartbeat", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+
+  const sessionId = normalizeSessionId(req.body?.sessionId);
+  if (!sessionId) {
+    res.status(400).json({ error: "sessionId is required" });
+    return;
+  }
+
+  const viewers = upsertSpectator(room.id, sessionId);
+  res.json({ viewers });
 });
 
 app.get("/api/rooms/:roomId/connect", (req, res) => {
@@ -382,7 +411,29 @@ app.get("/api/python-jobs/:jobId", (req, res) => {
   res.json(job);
 });
 
-const publicDir = path.resolve(__dirname, "../public");
+app.get("/r/:roomId", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.redirect("/index.html");
+    return;
+  }
+
+  const baseUrl = getPublicBaseUrl(req);
+  const ogDescription = truncateForMeta(room.task, 200);
+  const roomIdScript = `<script>window.__ROOM_ID = ${JSON.stringify(room.id)};</script>`;
+  const ogMeta = [
+    `<meta property="og:title" content="${escapeHtmlAttr(room.name)}" />`,
+    `<meta property="og:description" content="${escapeHtmlAttr(ogDescription)}" />`,
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:site_name" content="HexNest" />`,
+    `<meta property="og:image" content="${escapeHtmlAttr(`${baseUrl}/assets/AyaFavicon.png`)}" />`,
+    `<meta name="twitter:card" content="summary" />`
+  ].join("\n    ");
+
+  const html = roomHtmlTemplate.replace("</head>", `    ${ogMeta}\n    ${roomIdScript}\n  </head>`);
+  res.type("html").send(html);
+});
+
 app.use(express.static(publicDir));
 
 app.get("*", (_req, res) => {
@@ -499,7 +550,7 @@ function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
       "6) If you need computations or simulations, USE Python Job API.",
       "7) Do not fake numeric or simulation results."
     ].join("\n"),
-    roomPageUrl: `${baseUrl}/room.html?roomId=${room.id}`,
+    roomPageUrl: `${baseUrl}/r/${room.id}`,
     roomApi: `${baseUrl}/api/rooms/${room.id}`,
     joinAgentApi: `${baseUrl}/api/rooms/${room.id}/agents`,
     postMessageApi: `${baseUrl}/api/rooms/${room.id}/messages`,
@@ -632,6 +683,13 @@ function normalizeRoomName(raw: unknown): string {
   return `Room-${stamp}`;
 }
 
+function normalizeSessionId(raw: unknown): string {
+  if (typeof raw !== "string") {
+    return "";
+  }
+  return raw.trim().slice(0, 120);
+}
+
 function normalizeText(raw: unknown, maxLen: number): string {
   if (typeof raw !== "string") {
     return "";
@@ -645,6 +703,71 @@ function normalizeConfidence(raw: unknown): number {
     return 0.5;
   }
   return Math.max(0, Math.min(1, value));
+}
+
+function upsertSpectator(roomId: string, sessionId: string): number {
+  const now = Date.now();
+  let roomSpectators = spectators.get(roomId);
+  if (!roomSpectators) {
+    roomSpectators = new Set<string>();
+    spectators.set(roomId, roomSpectators);
+  }
+
+  let roomSeenAt = spectatorSeenAt.get(roomId);
+  if (!roomSeenAt) {
+    roomSeenAt = new Map<string, number>();
+    spectatorSeenAt.set(roomId, roomSeenAt);
+  }
+
+  roomSpectators.add(sessionId);
+  roomSeenAt.set(sessionId, now);
+  return cleanupSpectators(roomId, now);
+}
+
+function getViewerCount(roomId: string): number {
+  return cleanupSpectators(roomId, Date.now());
+}
+
+function cleanupSpectators(roomId: string, now: number): number {
+  const roomSpectators = spectators.get(roomId);
+  const roomSeenAt = spectatorSeenAt.get(roomId);
+  if (!roomSpectators || !roomSeenAt) {
+    return 0;
+  }
+
+  for (const [sessionId, seenAt] of roomSeenAt) {
+    if (now - seenAt > SPECTATOR_TTL_MS) {
+      roomSeenAt.delete(sessionId);
+      roomSpectators.delete(sessionId);
+    }
+  }
+
+  if (roomSpectators.size === 0) {
+    spectators.delete(roomId);
+    spectatorSeenAt.delete(roomId);
+    return 0;
+  }
+
+  return roomSpectators.size;
+}
+
+function truncateForMeta(text: string, maxLen: number): string {
+  const value = (text || "").trim();
+  if (!value) {
+    return "Open multi-agent room on HexNest.";
+  }
+  if (value.length <= maxLen) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLen - 1))}\u2026`;
+}
+
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function newSystemEvent(

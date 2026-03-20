@@ -3,6 +3,7 @@ const { api, populateRoomsNav, getQueryParam, escapeHtml } = window.hexnest;
 const roomTitleEl = document.getElementById("roomTitle");
 const roomTaskTextEl = document.getElementById("roomTaskText");
 const roomStatusTextEl = document.getElementById("roomStatusText");
+const roomViewerCountEl = document.getElementById("roomViewerCount");
 const roomPhaseChipEl = document.getElementById("roomPhaseChip");
 const roomShellChipEl = document.getElementById("roomShellChip");
 const roomConnectBriefEl = document.getElementById("roomConnectBrief");
@@ -14,12 +15,14 @@ const copyBriefBtn = document.getElementById("copyBriefBtn");
 const joinedAgentListEl = document.getElementById("joinedAgentList");
 const pythonJobsListEl = document.getElementById("pythonJobsList");
 
-const roomId = getQueryParam("roomId");
+const roomId = getQueryParam("roomId") || window.__ROOM_ID;
+const spectatorSessionId = createSessionId();
 
 let knownEventCount = 0;
 let eventQueue = [];
 let eventReplayTimer = null;
 let pollTimer = null;
+let heartbeatTimer = null;
 
 init().catch(handleError);
 
@@ -81,6 +84,9 @@ window.addEventListener("beforeunload", () => {
   if (eventReplayTimer) {
     window.clearInterval(eventReplayTimer);
   }
+  if (heartbeatTimer) {
+    window.clearInterval(heartbeatTimer);
+  }
 });
 
 async function init() {
@@ -88,8 +94,12 @@ async function init() {
     setMeta("Missing roomId in URL.");
     return;
   }
+  await sendHeartbeat();
   await populateRoomsNav("roomNavList", roomId);
   await refreshRoom();
+  heartbeatTimer = window.setInterval(async () => {
+    await sendHeartbeat();
+  }, 10000);
   pollTimer = window.setInterval(async () => {
     await refreshRoom(false);
   }, 2200);
@@ -259,6 +269,7 @@ function renderRoomHeader(room) {
   roomTitleEl.textContent = room.name || `Room ${room.id.slice(0, 8)}`;
   roomTaskTextEl.textContent = room.task || "";
   roomStatusTextEl.textContent = `ROOM STATUS: ${room.status}`;
+  renderViewerCount(room.viewers);
   roomPhaseChipEl.textContent = `phase: ${room.phase}`;
   roomShellChipEl.textContent = `python_shell: ${
     room.settings?.pythonShellEnabled ? "on" : "off"
@@ -300,6 +311,36 @@ function renderRoomBrief(brief) {
 
 function setMeta(text) {
   roomMetaEl.textContent = text;
+}
+
+async function sendHeartbeat() {
+  if (!roomId) {
+    return;
+  }
+  try {
+    const result = await api(`/api/rooms/${encodeURIComponent(roomId)}/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({ sessionId: spectatorSessionId })
+    });
+    renderViewerCount(result?.viewers);
+  } catch {
+    // heartbeat failures should not break room polling UI
+  }
+}
+
+function renderViewerCount(rawCount) {
+  if (!roomViewerCountEl) {
+    return;
+  }
+  const viewers = Math.max(0, Number(rawCount) || 0);
+  roomViewerCountEl.textContent = `👁 ${viewers} watching`;
+}
+
+function createSessionId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 12)}`;
 }
 
 function handleError(error) {
