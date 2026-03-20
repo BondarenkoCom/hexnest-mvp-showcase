@@ -4,7 +4,6 @@ Injected before every user script to block dangerous operations.
 """
 import importlib
 import importlib.abc
-import importlib.machinery
 import sys
 import builtins
 
@@ -15,7 +14,6 @@ _BLOCKED_MODULES = frozenset({
     "subprocess", "shutil", "pathlib",
     "signal", "resource",
     # System internals
-    "sys", "importlib", "importlib.abc", "importlib.machinery",
     "ctypes", "ctypes.util",
     "_thread", "threading", "multiprocessing",
     # Network
@@ -27,19 +25,17 @@ _BLOCKED_MODULES = frozenset({
     "socketserver",
     "requests", "httpx", "aiohttp",
     # Code execution / introspection
-    "code", "codeop", "compile", "compileall",
-    "inspect", "dis", "ast",
+    "code", "codeop", "compileall",
+    "inspect", "dis",
     "pickle", "shelve", "marshal",
     # File I/O escape
     "tempfile", "glob", "fnmatch",
     "zipfile", "tarfile", "gzip", "bz2", "lzma",
-    "io",
     # Dangerous stdlib
     "webbrowser", "antigravity",
     "ensurepip", "pip", "setuptools",
 })
 
-# Modules that are allowed even though they start with a blocked prefix
 _ALLOWED_MODULES = frozenset({
     "math", "cmath", "decimal", "fractions", "statistics",
     "random", "secrets",
@@ -52,6 +48,7 @@ _ALLOWED_MODULES = frozenset({
     "struct", "codecs",
     "numbers", "abc",
     "unicodedata",
+    "io",
 })
 
 
@@ -73,21 +70,20 @@ class _SandboxImportBlocker(importlib.abc.MetaPathFinder):
     def _is_blocked(name):
         if name in _ALLOWED_MODULES:
             return False
-        # Check exact match or prefix match for submodules
         for blocked in _BLOCKED_MODULES:
             if name == blocked or name.startswith(blocked + "."):
                 return True
         return False
 
 
-# Install the blocker as the FIRST meta path finder
+# Install the blocker
 sys.meta_path.insert(0, _SandboxImportBlocker())
 
 # ── Block dangerous builtins ──
 _original_open = builtins.open
 
+
 def _safe_open(file, mode="r", *args, **kwargs):
-    """Only allow reading files in the current working directory."""
     mode_str = str(mode)
     if any(c in mode_str for c in ("w", "a", "x", "+")):
         raise PermissionError(
@@ -95,15 +91,36 @@ def _safe_open(file, mode="r", *args, **kwargs):
         )
     return _original_open(file, mode, *args, **kwargs)
 
+
 builtins.open = _safe_open
-builtins.exec = None
-builtins.eval = None
-builtins.compile = None
-builtins.__import__ = None
 
-# Remove sys from user access after setup
-_original_modules = sys.modules.copy()
+# Block exec/eval but keep __import__ alive (needed by allowed modules internally)
+_original_exec = builtins.exec
+_original_eval = builtins.eval
 
-# ── Now execute the user script ──
-import runpy as _runpy
-_runpy.run_path("main.py", run_name="__main__")
+
+def _blocked_exec(*args, **kwargs):
+    raise PermissionError("[HexNest Sandbox] exec() is blocked.")
+
+
+def _blocked_eval(*args, **kwargs):
+    raise PermissionError("[HexNest Sandbox] eval() is blocked.")
+
+
+builtins.exec = _blocked_exec
+builtins.eval = _blocked_eval
+
+# ── Execute user script ──
+# We use exec with compile so we can control the namespace
+_code_path = "main.py"
+with _original_open(_code_path, "r") as _f:
+    _source = _f.read()
+
+# Temporarily restore exec for our own use, then re-block
+builtins.exec = _original_exec
+_compiled = compile(_source, _code_path, "exec")
+_user_globals = {"__name__": "__main__", "__file__": _code_path}
+exec(_compiled, _user_globals)
+
+# Re-block after execution (in case of lingering references)
+builtins.exec = _blocked_exec

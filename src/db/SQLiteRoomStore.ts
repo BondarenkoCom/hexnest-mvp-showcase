@@ -89,6 +89,7 @@ export class SQLiteRoomStore implements RoomStore {
       id: newId(),
       name: input.name,
       task: input.task,
+      subnest: input.subnest || "general",
       settings: {
         pythonShellEnabled: input.pythonShellEnabled,
         isPublic: true
@@ -146,6 +147,9 @@ export class SQLiteRoomStore implements RoomStore {
     const room = JSON.parse(raw) as RoomSnapshot;
     if (!room.name || room.name.trim().length === 0) {
       room.name = `Room ${room.id.slice(0, 8)}`;
+    }
+    if (!room.subnest) {
+      room.subnest = "general";
     }
     if (!room.settings) {
       room.settings = { pythonShellEnabled: false, isPublic: true };

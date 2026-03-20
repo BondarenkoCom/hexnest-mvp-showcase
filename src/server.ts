@@ -9,6 +9,7 @@ import {
   PythonJobUpdate,
   SubmitPythonJobInput
 } from "./tools/PythonJobManager";
+import { SUBNESTS, getSubNest } from "./config/subnests";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -98,6 +99,39 @@ app.get("/api/connect/instructions", (req, res) => {
   });
 });
 
+// ── SubNests ──
+
+app.get("/api/subnests", (_req, res) => {
+  res.json({ value: SUBNESTS });
+});
+
+app.get("/api/subnests/:subnestId/rooms", (req, res) => {
+  const sub = getSubNest(req.params.subnestId);
+  if (!sub) {
+    res.status(404).json({ error: "subnest not found" });
+    return;
+  }
+  const rooms = store.listRooms().filter((r) => r.subnest === sub.id);
+  res.json({
+    subnest: sub,
+    value: rooms.map((room) => ({
+      id: room.id,
+      name: room.name,
+      task: room.task,
+      subnest: room.subnest,
+      settings: room.settings,
+      status: room.status,
+      phase: room.phase,
+      createdAt: room.createdAt,
+      updatedAt: room.updatedAt,
+      connectedAgentsCount: room.connectedAgents.length,
+      pythonJobsCount: room.pythonJobs.length
+    }))
+  });
+});
+
+// ── Rooms ──
+
 app.get("/api/rooms", (_req, res) => {
   const rooms = store.listRooms();
   res.json({
@@ -105,6 +139,7 @@ app.get("/api/rooms", (_req, res) => {
       id: room.id,
       name: room.name,
       task: room.task,
+      subnest: room.subnest,
       settings: room.settings,
       status: room.status,
       phase: room.phase,
@@ -120,9 +155,15 @@ app.post("/api/rooms", (req, res) => {
   const name = normalizeRoomName(req.body?.name);
   const task = normalizeText(req.body?.task, 4000);
   const pythonShellEnabled = Boolean(req.body?.pythonShellEnabled);
+  const subnest = normalizeText(req.body?.subnest, 40) || "general";
 
   if (!task) {
     res.status(400).json({ error: "task is required" });
+    return;
+  }
+
+  if (!getSubNest(subnest)) {
+    res.status(400).json({ error: `unknown subnest: ${subnest}` });
     return;
   }
 
@@ -130,7 +171,8 @@ app.post("/api/rooms", (req, res) => {
     name,
     task,
     agentIds: [],
-    pythonShellEnabled
+    pythonShellEnabled,
+    subnest
   });
   res.status(201).json(room);
 });

@@ -62,13 +62,14 @@
       const node = document.createElement("a");
       node.className = `room-item ${room.id === activeRoomId ? "active" : ""}`;
       node.href = `/room.html?roomId=${encodeURIComponent(room.id)}`;
+      const subTag = room.subnest ? `<span class="subnest-tag">n/${escapeHtml(room.subnest)}</span>` : "";
       node.innerHTML = `
         <span class="room-head">
           <span class="room-id">${escapeHtml(room.id.slice(0, 8))}</span>
           <span class="room-status status-${escapeHtml(room.status)}">${escapeHtml(room.status)}</span>
         </span>
         <span class="room-task">${escapeHtml(truncate(room.name || room.task, 52))}</span>
-        <span class="room-phase">${escapeHtml(room.phase)}</span>
+        <span class="room-phase">${subTag} ${escapeHtml(room.phase)}</span>
       `;
       el.appendChild(node);
     });

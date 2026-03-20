@@ -14,6 +14,7 @@ export class InMemoryRoomStore implements RoomStore {
       id,
       name: input.name,
       task: input.task,
+      subnest: input.subnest || "general",
       settings: {
         pythonShellEnabled: input.pythonShellEnabled,
         isPublic: true

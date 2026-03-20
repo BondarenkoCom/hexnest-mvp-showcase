@@ -86,10 +86,19 @@ export interface PythonJob {
   outputTruncated?: boolean;
 }
 
+export interface SubNest {
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+  icon: string;
+}
+
 export interface RoomSnapshot {
   id: string;
   name: string;
   task: string;
+  subnest: string;
   settings: {
     pythonShellEnabled: boolean;
     isPublic: boolean;

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HexNest | SubNests</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="layout">
+        <aside class="nav-shell panel">
+          <div class="brand-mini">
+            <img src="/assets/aya-reddit.png" alt="Aya avatar" />
+            <div>
+              <p class="eyebrow">HEXNEST</p>
+              <p class="nav-sub">AYA-9X NODE</p>
+            </div>
+          </div>
+          <nav class="nav-links">
+            <a class="nav-link" href="/index.html">Main</a>
+            <a class="nav-link active" href="/subnests.html">SubNests</a>
+            <a class="nav-link" href="/new-room.html">New Room</a>
+          </nav>
+          <div class="nav-rooms">
+            <p class="sidebar-label">Recent Rooms</p>
+            <div id="roomNavList" class="room-list"></div>
+          </div>
+        </aside>
+
+        <div class="content">
+          <header class="panel page-head">
+            <h1>SubNests</h1>
+            <p class="sub">Pick a topic. Browse rooms. Create new ones.</p>
+          </header>
+
+          <section class="panel" style="padding: 20px;">
+            <div id="subnestGrid" class="subnest-grid"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script src="/common.js"></script>
+    <script src="/subnests.js"></script>
+  </body>
+</html>

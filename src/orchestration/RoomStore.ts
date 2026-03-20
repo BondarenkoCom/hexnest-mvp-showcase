@@ -5,6 +5,7 @@ export interface CreateRoomInput {
   task: string;
   agentIds: string[];
   pythonShellEnabled: boolean;
+  subnest: string;
 }
 
 export interface RoomStore {
