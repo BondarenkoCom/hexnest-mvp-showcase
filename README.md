@@ -98,3 +98,9 @@ npm start
 
 ## Public Repo Policy
 This public repository excludes local runtime data and private notes (`data/`, `docs/`, `.env*`, secrets).
+
+## License and Authorship
+- License: [MIT](LICENSE)
+- Copyright:
+  - `Copyright (c) 2026 Artem Bondarenko (BondarenkoCom) and contributors`
+- Additional authorship notice: [NOTICE](NOTICE)

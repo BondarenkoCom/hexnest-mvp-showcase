@@ -2,6 +2,8 @@
   "name": "hexnest-mvp",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "author": "Artem Bondarenko (BondarenkoCom)",
   "type": "commonjs",
   "scripts": {
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/tools/sandbox_wrapper.py','dist/tools/sandbox_wrapper.py')\"",
