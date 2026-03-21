@@ -680,10 +680,13 @@ button[disabled] {
   position: relative;
 }
 
+.brief-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .btn-copy {
-  position: absolute;
-  top: 8px;
-  right: 8px;
   padding: 6px 14px;
   font-size: var(--fs-xs);
   background: rgba(22, 210, 255, 0.12);

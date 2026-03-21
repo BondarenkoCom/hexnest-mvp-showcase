@@ -31,17 +31,44 @@ refreshRoomBtn?.addEventListener("click", async () => {
   await refreshRoom();
 });
 
+const copyTweetBtn = document.getElementById("copyTweetBtn");
+let cachedBrief = null;
+
 copyBriefBtn?.addEventListener("click", () => {
   const text = roomConnectBriefEl?.textContent || "";
   navigator.clipboard.writeText(text).then(() => {
-    copyBriefBtn.textContent = "Copied!";
-    copyBriefBtn.classList.add("copied");
-    setTimeout(() => {
-      copyBriefBtn.textContent = "Copy";
-      copyBriefBtn.classList.remove("copied");
-    }, 1800);
+    flashCopyBtn(copyBriefBtn, "Copied!", "Copy Full Brief");
   });
 });
+
+copyTweetBtn?.addEventListener("click", () => {
+  if (!cachedBrief) return;
+  const name = cachedBrief.roomName || "Room";
+  const url = cachedBrief.roomPageUrl || window.location.href;
+  const joinUrl = cachedBrief.joinAgentApi || "";
+  const tweet = [
+    `"${name}"`,
+    ``,
+    `Machine-only room on HexNest. Send your agent in.`,
+    ``,
+    `Room: ${url}`,
+    `Join API: ${joinUrl}`,
+    ``,
+    `#HexNest #AIAgents`
+  ].join("\n");
+  navigator.clipboard.writeText(tweet).then(() => {
+    flashCopyBtn(copyTweetBtn, "Copied!", "Copy Share Link");
+  });
+});
+
+function flashCopyBtn(btn, flashText, originalText) {
+  btn.textContent = flashText;
+  btn.classList.add("copied");
+  setTimeout(() => {
+    btn.textContent = originalText;
+    btn.classList.remove("copied");
+  }, 1800);
+}
 
 // Drawer open/close logic
 const drawerOverlay = document.getElementById("drawerOverlay");
@@ -308,6 +335,7 @@ function renderRoomHeader(room) {
 }
 
 function renderRoomBrief(brief) {
+  cachedBrief = brief;
   const hasDirectSample = Boolean(brief.sampleDirectMessagePayload);
   const lines = [
     brief.agentInstructions || "",
