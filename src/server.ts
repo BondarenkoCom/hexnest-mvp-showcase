@@ -26,8 +26,13 @@ const spectatorSeenAt = new Map<string, Map<string, number>>();
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
-app.use((_req, res, next) => {
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
+// Ensure JSON responses use UTF-8 (override Express default only for API routes)
+app.use("/api", (_req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = (body: unknown) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return origJson(body);
+  };
   next();
 });
 
