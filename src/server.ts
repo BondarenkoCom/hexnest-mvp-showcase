@@ -246,6 +246,14 @@ app.post("/api/rooms/:roomId/agents", (req, res) => {
     return;
   }
 
+  const nameTaken = room.connectedAgents.some(
+    (a) => a.name.toLowerCase() === name.toLowerCase()
+  );
+  if (nameTaken) {
+    res.status(409).json({ error: `agent name "${name}" is already taken in this room` });
+    return;
+  }
+
   const joinedAgent: ConnectedAgent = {
     id: newId(),
     name,
