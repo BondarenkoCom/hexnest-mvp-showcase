@@ -14,6 +14,7 @@ const refreshRoomBtn = document.getElementById("refreshRoomBtn");
 const copyBriefBtn = document.getElementById("copyBriefBtn");
 const joinedAgentListEl = document.getElementById("joinedAgentList");
 const pythonJobsListEl = document.getElementById("pythonJobsList");
+const systemEventsListEl = document.getElementById("systemEventsList");
 
 const roomId = getQueryParam("roomId") || window.__ROOM_ID;
 const spectatorSessionId = createSessionId();
@@ -132,6 +133,11 @@ async function refreshRoom(showMeta = true) {
   }
 }
 
+function isSystemEvent(item) {
+  const env = item.envelope || {};
+  return env.message_type === "system" || env.from_agent === "system";
+}
+
 function ingestTimeline(allEvents) {
   if (!Array.isArray(allEvents)) {
     return;
@@ -141,6 +147,7 @@ function ingestTimeline(allEvents) {
     knownEventCount = 0;
     eventQueue = [];
     liveTimelineEl.innerHTML = "";
+    systemEventsListEl.innerHTML = "";
   }
 
   const freshEvents = allEvents.slice(knownEventCount);
@@ -149,8 +156,20 @@ function ingestTimeline(allEvents) {
     return;
   }
 
-  eventQueue.push(...freshEvents);
-  startEventReplay();
+  // System events go directly to drawer, no replay delay
+  const chatEvents = [];
+  freshEvents.forEach((ev) => {
+    if (isSystemEvent(ev)) {
+      appendSystemEvent(ev);
+    } else {
+      chatEvents.push(ev);
+    }
+  });
+
+  if (chatEvents.length > 0) {
+    eventQueue.push(...chatEvents);
+    startEventReplay();
+  }
 }
 
 function startEventReplay() {
@@ -164,32 +183,44 @@ function startEventReplay() {
       eventReplayTimer = null;
       return;
     }
-    appendTimelineCard(next);
+    appendChatCard(next);
   }, 420);
 }
 
-function appendTimelineCard(item) {
+function appendChatCard(item) {
   const card = document.createElement("article");
   const phaseClass = `phase-${String(item.phase || "unknown").replaceAll("_", "-")}`;
   card.className = `chat-line ${phaseClass}`;
 
   const envelope = item.envelope || {};
-  const triggeredBy = envelope.triggered_by
-    ? String(envelope.triggered_by).slice(0, 12)
-    : "null";
+  const from = envelope.from_agent || "agent";
+  const to = envelope.to_agent || "room";
+  const scope = envelope.scope || "room";
+  const isDirect = scope === "direct";
+
+  const targetLabel = isDirect ? `-> ${escapeHtml(to)}` : "";
+  const scopeBadge = isDirect ? `<span class="chat-scope-badge">DM</span>` : "";
+  const confidence = envelope.confidence != null ? `<span class="chat-confidence">${Math.round(envelope.confidence * 100)}%</span>` : "";
+
   card.innerHTML = `
-    <p class="line-title">>> [${escapeHtml(item.phase || "phase")}]
-${escapeHtml(envelope.from_agent || "agent")} -> ${escapeHtml(envelope.to_agent || "room")}</p>
-    <p class="line-body">intent=${escapeHtml(envelope.intent || "intent")}
-scope=${escapeHtml(envelope.scope || "room")}
-triggered_by=${escapeHtml(triggeredBy)}
-confidence=${escapeHtml(String(envelope.confidence ?? ""))}
-need_human=${escapeHtml(String(envelope.need_human ?? false))}
-${escapeHtml(envelope.explanation || "")}</p>
+    <p class="line-title">${escapeHtml(from)} ${targetLabel} ${scopeBadge} ${confidence}</p>
+    <p class="line-body">${escapeHtml(envelope.explanation || "")}</p>
   `;
 
   liveTimelineEl.appendChild(card);
   liveTimelineEl.scrollTop = liveTimelineEl.scrollHeight;
+}
+
+function appendSystemEvent(item) {
+  const card = document.createElement("article");
+  card.className = "chat-line phase-system";
+  const envelope = item.envelope || {};
+  card.innerHTML = `
+    <p class="line-title">system · ${escapeHtml(envelope.intent || "event")}</p>
+    <p class="line-body">${escapeHtml(envelope.explanation || "")}</p>
+  `;
+  systemEventsListEl.appendChild(card);
+  systemEventsListEl.scrollTop = systemEventsListEl.scrollHeight;
 }
 
 function renderArtifacts(artifacts) {

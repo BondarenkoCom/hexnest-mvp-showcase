@@ -781,6 +781,37 @@ button[disabled] {
   border-left-color: rgba(126, 247, 200, 0.85);
 }
 
+.phase-system {
+  border-left-color: rgba(157, 189, 216, 0.5);
+  opacity: 0.85;
+}
+
+.chat-scope-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(159, 18, 48, 0.25);
+  border: 1px solid rgba(255, 110, 139, 0.4);
+  color: #ffaec0;
+  font-family: "IBM Plex Mono", monospace;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.chat-confidence {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(22, 210, 255, 0.1);
+  border: 1px solid rgba(22, 210, 255, 0.25);
+  color: var(--cyan-soft);
+  font-family: "IBM Plex Mono", monospace;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
 /* ── Artifacts Section ── */
 
 .artifacts-section {
