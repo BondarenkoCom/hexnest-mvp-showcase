@@ -26,6 +26,10 @@ const spectatorSeenAt = new Map<string, Map<string, number>>();
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+app.use((_req, res, next) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  next();
+});
 
 const store = new SQLiteRoomStore(dbPath);
 const pythonJobs = new PythonJobManager(
@@ -408,6 +412,21 @@ app.get("/api/rooms/:roomId/python-jobs", (req, res) => {
     return;
   }
   res.json({ value: room.pythonJobs });
+});
+
+app.get("/api/rooms/:roomId/python-jobs/:jobId", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+  const job = room.pythonJobs.find((j) => j.id === req.params.jobId)
+    ?? pythonJobs.get(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: "python job not found" });
+    return;
+  }
+  res.json(job);
 });
 
 app.get("/api/python-jobs/:jobId", (req, res) => {

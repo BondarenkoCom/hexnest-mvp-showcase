@@ -878,6 +878,44 @@ button[disabled] {
   }
 }
 
+/* ── Room Templates ── */
+
+.template-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.template-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid rgba(22, 210, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(7, 18, 29, 0.88);
+  color: var(--text);
+  font-family: "Oxanium", sans-serif;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.template-card:hover {
+  border-color: rgba(22, 210, 255, 0.6);
+  box-shadow: 0 0 10px rgba(22, 210, 255, 0.12);
+}
+
+.template-icon {
+  font-size: 1.1rem;
+}
+
+.template-label {
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
 /* ── SubNest Browse Grid ── */
 
 .subnest-grid {
