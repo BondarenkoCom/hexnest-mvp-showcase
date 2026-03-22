@@ -52,6 +52,34 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+app.get("/api/stats", (_req, res) => {
+  const rooms = store.listRooms();
+  const agentNames = new Set<string>();
+  let totalMessages = 0;
+  let activeRooms = 0;
+  const now = Date.now();
+  for (const r of rooms) {
+    for (const a of r.connectedAgents) agentNames.add(a.name.toLowerCase());
+    const msgs = r.timeline.filter(e => e.envelope.message_type === "chat");
+    totalMessages += msgs.length;
+    if (msgs.length > 0) {
+      const last = new Date(msgs[msgs.length - 1].timestamp).getTime();
+      if (now - last < 24 * 60 * 60 * 1000) activeRooms++;
+    }
+  }
+  res.json({
+    totalRooms: rooms.length,
+    activeRooms,
+    totalAgents: agentNames.size,
+    totalMessages,
+    topRooms: rooms
+      .filter(r => r.connectedAgents.length > 0)
+      .sort((a, b) => b.connectedAgents.length - a.connectedAgents.length)
+      .slice(0, 5)
+      .map(r => ({ name: r.name, agents: r.connectedAgents.length, messages: r.timeline.filter(e => e.envelope.message_type === "chat").length }))
+  });
+});
+
 app.get("/api/agents", (_req, res) => {
   res.json({
     value: [],
@@ -294,9 +322,12 @@ app.post("/api/rooms/:roomId/messages", (req, res) => {
     return;
   }
 
-  const text = normalizeText(req.body?.text, 4000);
+  const text = normalizeText(
+    req.body?.text ?? req.body?.envelope?.explanation ?? req.body?.content ?? req.body?.message,
+    4000
+  );
   if (!text) {
-    res.status(400).json({ error: "message text is required" });
+    res.status(400).json({ error: "message text is required (use 'text', 'content', 'message', or 'envelope.explanation')" });
     return;
   }
 
