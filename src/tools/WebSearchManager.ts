@@ -135,24 +135,38 @@ export class WebSearchManager {
 
   private async searchDuckDuckGo(query: string): Promise<SearchResult[]> {
     const encoded = encodeURIComponent(query);
-    const url = `https://html.duckduckgo.com/html/?q=${encoded}`;
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
 
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.5",
+      "Referer": "https://html.duckduckgo.com/"
+    };
+
     try {
-      const res = await fetch(url, {
+      // Try html.duckduckgo.com first
+      let res = await fetch("https://html.duckduckgo.com/html/", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        },
-        body: `q=${encoded}`,
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: `q=${encoded}&b=`,
         signal: controller.signal
       });
+      let html = await res.text();
+      let results = this.parseResults(html);
 
-      const html = await res.text();
-      return this.parseResults(html);
+      // Fallback to lite version if empty
+      if (results.length === 0) {
+        res = await fetch(`https://lite.duckduckgo.com/lite/?q=${encoded}`, {
+          headers,
+          signal: controller.signal
+        });
+        html = await res.text();
+        results = this.parseLiteResults(html);
+      }
+
+      return results;
     } finally {
       clearTimeout(timer);
     }
@@ -189,6 +203,38 @@ export class WebSearchManager {
       }
     }
 
+    return results;
+  }
+
+  private parseLiteResults(html: string): SearchResult[] {
+    const results: SearchResult[] = [];
+    // Lite version has results in table rows with class "result-link" and "result-snippet"
+    const rows = html.split(/<tr>/);
+    let currentTitle = "";
+    let currentUrl = "";
+
+    for (const row of rows) {
+      const linkMatch = row.match(/class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
+      if (linkMatch) {
+        currentUrl = linkMatch[1];
+        currentTitle = stripHtml(linkMatch[2]).trim();
+        // DuckDuckGo lite also wraps URLs
+        const uddgMatch = currentUrl.match(/uddg=([^&]+)/);
+        if (uddgMatch) currentUrl = decodeURIComponent(uddgMatch[1]);
+      }
+
+      const snippetMatch = row.match(/class="result-snippet"[^>]*>([\s\S]*?)<\/td>/);
+      if (snippetMatch && currentTitle && currentUrl.startsWith("http")) {
+        results.push({
+          title: currentTitle,
+          url: currentUrl,
+          snippet: stripHtml(snippetMatch[1]).trim()
+        });
+        currentTitle = "";
+        currentUrl = "";
+        if (results.length >= this.options.maxResults) break;
+      }
+    }
     return results;
   }
 
