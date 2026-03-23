@@ -10,6 +10,10 @@ import {
   PythonJobUpdate,
   SubmitPythonJobInput
 } from "./tools/PythonJobManager";
+import {
+  WebSearchManager,
+  WebSearchJobUpdate
+} from "./tools/WebSearchManager";
 import { SUBNESTS, getSubNest } from "./config/subnests";
 
 const app = express();
@@ -40,6 +44,11 @@ const store = new SQLiteRoomStore(dbPath);
 const pythonJobs = new PythonJobManager(
   PythonJobManager.defaultOptions((update) => {
     onPythonJobUpdate(update);
+  })
+);
+const webSearch = new WebSearchManager(
+  WebSearchManager.defaultOptions((update) => {
+    onWebSearchJobUpdate(update);
   })
 );
 
@@ -474,6 +483,55 @@ app.get("/api/python-jobs/:jobId", (req, res) => {
   res.json(job);
 });
 
+// ── Web Search Jobs ──
+
+app.post("/api/rooms/:roomId/search-jobs", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) { res.status(404).json({ error: "room not found" }); return; }
+
+  const body = req.body || {};
+  const agentId = body.agentId || body.agentName;
+  if (!agentId) { res.status(400).json({ error: "agentId is required" }); return; }
+  const agent = room.connectedAgents.find(
+    (a: ConnectedAgent) => a.id === agentId || a.name === agentId
+  );
+  if (!agent) { res.status(403).json({ error: "agent not in room" }); return; }
+
+  const query = (body.query || "").trim();
+  if (!query) { res.status(400).json({ error: "query is required" }); return; }
+
+  try {
+    const job = webSearch.submit({
+      roomId: room.id,
+      agentId: agent.id,
+      agentName: agent.name,
+      query
+    });
+    res.status(202).json(job);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.get("/api/rooms/:roomId/search-jobs", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) { res.status(404).json({ error: "room not found" }); return; }
+  res.json(webSearch.listByRoom(room.id));
+});
+
+app.get("/api/rooms/:roomId/search-jobs/:jobId", (req, res) => {
+  const job = webSearch.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "search job not found" }); return; }
+  res.json(job);
+});
+
+app.get("/api/search-jobs/:jobId", (req, res) => {
+  const job = webSearch.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "search job not found" }); return; }
+  res.json(job);
+});
+
 app.get("/r/:roomId", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) {
@@ -696,6 +754,52 @@ function upsertPythonJob(room: RoomSnapshot, job: RoomSnapshot["pythonJobs"][num
     return;
   }
   room.pythonJobs.unshift(job);
+}
+
+function onWebSearchJobUpdate(update: WebSearchJobUpdate): void {
+  const room = store.getRoom(update.job.roomId);
+  if (!room) return;
+
+  if (!room.searchJobs) room.searchJobs = [];
+  const idx = room.searchJobs.findIndex((j) => j.id === update.job.id);
+  if (idx >= 0) room.searchJobs[idx] = update.job;
+  else room.searchJobs.unshift(update.job);
+
+  if (update.kind === "queued") {
+    room.timeline.push(
+      newSystemEvent(room.id, "open_room", "web_search_queued",
+        `${update.job.agentName} searched: "${update.job.query}"`)
+    );
+  } else if (update.kind === "started") {
+    room.timeline.push(
+      newSystemEvent(room.id, "open_room", "web_search_started",
+        `${update.job.agentName} web search running...`)
+    );
+  } else if (update.kind === "finished") {
+    room.timeline.push(
+      newSystemEvent(room.id, "open_room", `web_search_${update.job.status}`,
+        `${update.job.agentName} web search finished (${update.job.status})`)
+    );
+
+    if (update.job.results && update.job.results.length > 0) {
+      const content = update.job.results
+        .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
+        .join("\n\n");
+
+      room.artifacts.push({
+        id: newId(),
+        taskId: room.id,
+        type: "note",
+        label: `Web search: "${update.job.query}" (${update.job.results.length} results)`,
+        producer: update.job.agentName,
+        timestamp: nowIso(),
+        content: `Query: ${update.job.query}\n\n${content}`
+      });
+    }
+  }
+
+  room.status = "open";
+  store.saveRoom(room);
 }
 
 function getPublicBaseUrl(req: Request): string {

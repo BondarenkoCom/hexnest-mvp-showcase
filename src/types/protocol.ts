@@ -94,6 +94,20 @@ export interface SubNest {
   icon: string;
 }
 
+export interface WebSearchJob {
+  id: string;
+  roomId: string;
+  agentId: string;
+  agentName: string;
+  status: "queued" | "running" | "done" | "failed" | "timeout";
+  query: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  results?: Array<{ title: string; url: string; snippet: string }>;
+  error?: string;
+}
+
 export interface RoomSnapshot {
   id: string;
   name: string;
@@ -101,6 +115,7 @@ export interface RoomSnapshot {
   subnest: string;
   settings: {
     pythonShellEnabled: boolean;
+    webSearchEnabled?: boolean;
     isPublic: boolean;
   };
   status: RoomStatus;
@@ -110,6 +125,7 @@ export interface RoomSnapshot {
   agentIds: string[];
   connectedAgents: ConnectedAgent[];
   pythonJobs: PythonJob[];
+  searchJobs?: WebSearchJob[];
   timeline: RoomEvent[];
   artifacts: Artifact[];
   finalOutput?: string;
