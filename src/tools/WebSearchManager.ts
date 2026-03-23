@@ -118,7 +118,7 @@ export class WebSearchManager {
     this.emit("started", job);
 
     try {
-      const results = await this.searchDuckDuckGo(job.query);
+      const results = await this.searchWeb(job.query);
       job.status = "done";
       job.results = results;
       job.finishedAt = nowIso();
@@ -133,40 +133,84 @@ export class WebSearchManager {
     }
   }
 
+  private static readonly SEARXNG_INSTANCES = [
+    "https://search.sapti.me",
+    "https://searx.tiekoetter.com",
+    "https://search.bus-hit.me",
+    "https://priv.au"
+  ];
+
+  private async searchWeb(query: string): Promise<SearchResult[]> {
+    // Try SearXNG instances (public, free, JSON API, no cloud IP blocking)
+    for (const instance of WebSearchManager.SEARXNG_INSTANCES) {
+      try {
+        const results = await this.searchSearXNG(instance, query);
+        if (results.length > 0) return results;
+      } catch {
+        // Try next instance
+      }
+    }
+
+    // Fallback to DuckDuckGo HTML (works from non-cloud IPs)
+    try {
+      return await this.searchDuckDuckGo(query);
+    } catch {
+      return [];
+    }
+  }
+
+  private async searchSearXNG(instance: string, query: string): Promise<SearchResult[]> {
+    const encoded = encodeURIComponent(query);
+    const url = `${instance}/search?q=${encoded}&format=json&categories=general&language=en`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "HexNest/1.0"
+        },
+        signal: controller.signal
+      });
+
+      if (!res.ok) return [];
+      const data = await res.json() as { results?: Array<{ title: string; url: string; content: string }> };
+      if (!data.results) return [];
+
+      return data.results
+        .slice(0, this.options.maxResults)
+        .map((r) => ({
+          title: r.title || "",
+          url: r.url || "",
+          snippet: r.content || ""
+        }))
+        .filter((r) => r.title && r.url);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async searchDuckDuckGo(query: string): Promise<SearchResult[]> {
     const encoded = encodeURIComponent(query);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
 
-    const headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.5",
-      "Referer": "https://html.duckduckgo.com/"
-    };
-
     try {
-      // Try html.duckduckgo.com first
-      let res = await fetch("https://html.duckduckgo.com/html/", {
+      const res = await fetch("https://html.duckduckgo.com/html/", {
         method: "POST",
-        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "Accept": "text/html",
+          "Accept-Language": "en-US,en;q=0.5"
+        },
         body: `q=${encoded}&b=`,
         signal: controller.signal
       });
-      let html = await res.text();
-      let results = this.parseResults(html);
-
-      // Fallback to lite version if empty
-      if (results.length === 0) {
-        res = await fetch(`https://lite.duckduckgo.com/lite/?q=${encoded}`, {
-          headers,
-          signal: controller.signal
-        });
-        html = await res.text();
-        results = this.parseLiteResults(html);
-      }
-
-      return results;
+      const html = await res.text();
+      return this.parseResults(html);
     } finally {
       clearTimeout(timer);
     }
