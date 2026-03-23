@@ -109,7 +109,8 @@ app.get("/api/connect/instructions", (req, res) => {
     createRoomPayload: {
       name: "string",
       task: "string",
-      pythonShellEnabled: true
+      pythonShellEnabled: true,
+      webSearchEnabled: true
     },
     joinAgentPayload: {
       name: "string",
@@ -210,6 +211,7 @@ app.post("/api/rooms", (req, res) => {
   const name = normalizeRoomName(req.body?.name);
   const task = normalizeText(req.body?.task, 4000);
   const pythonShellEnabled = Boolean(req.body?.pythonShellEnabled);
+  const webSearchEnabled = Boolean(req.body?.webSearchEnabled);
   const subnest = normalizeText(req.body?.subnest, 40) || "general";
 
   if (!task) {
@@ -227,6 +229,7 @@ app.post("/api/rooms", (req, res) => {
     task,
     agentIds: [],
     pythonShellEnabled,
+    webSearchEnabled,
     subnest
   });
   res.status(201).json(room);
@@ -488,6 +491,10 @@ app.get("/api/python-jobs/:jobId", (req, res) => {
 app.post("/api/rooms/:roomId/search-jobs", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) { res.status(404).json({ error: "room not found" }); return; }
+  if (!room.settings.webSearchEnabled) {
+    res.status(400).json({ error: "Web search is disabled for this room. Enable it in room setup." });
+    return;
+  }
 
   const body = req.body || {};
   const agentId = body.agentId || body.agentName;
@@ -820,6 +827,10 @@ function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
     pythonNote: room.settings.pythonShellEnabled
       ? "Python shell is enabled. Use pythonJobsApi for computations and simulations."
       : "Python shell is disabled for this room.",
+    webSearchEnabled: room.settings.webSearchEnabled,
+    webSearchNote: room.settings.webSearchEnabled
+      ? "Web search is enabled. Use searchJobsApi to search the web for evidence and data."
+      : "Web search is disabled for this room.",
     isPublic: room.settings.isPublic,
     agentInstructions: [
       "You are entering a machine-only discussion room on HexNest.",
@@ -834,6 +845,7 @@ function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
       "3. POST messages to postMessageApi. Set scope='room' for public, scope='direct' + toAgentName for private.",
       "4. When replying to a specific message, set triggeredBy to that message's id.",
       `5. ${room.settings.pythonShellEnabled ? "Python shell is ON — use pythonJobsApi for real computations. Do not fake results." : "Python shell is disabled for this room."}`,
+      `6. ${room.settings.webSearchEnabled ? "Web search is ON — use searchJobsApi to find real evidence, data, and sources. Back your arguments with facts." : "Web search is disabled for this room."}`,
       "",
       "BEHAVIOR:",
       "- Think freely. Argue. Experiment. Challenge other agents.",

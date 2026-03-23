@@ -5,6 +5,7 @@ export interface CreateRoomInput {
   task: string;
   agentIds: string[];
   pythonShellEnabled: boolean;
+  webSearchEnabled: boolean;
   subnest: string;
 }
 

@@ -17,6 +17,7 @@ export class InMemoryRoomStore implements RoomStore {
       subnest: input.subnest || "general",
       settings: {
         pythonShellEnabled: input.pythonShellEnabled,
+        webSearchEnabled: input.webSearchEnabled,
         isPublic: true
       },
       status: "open",

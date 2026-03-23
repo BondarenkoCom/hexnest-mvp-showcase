@@ -92,6 +92,7 @@ export class SQLiteRoomStore implements RoomStore {
       subnest: input.subnest || "general",
       settings: {
         pythonShellEnabled: input.pythonShellEnabled,
+        webSearchEnabled: input.webSearchEnabled,
         isPublic: true
       },
       status: "open",
@@ -159,6 +160,9 @@ export class SQLiteRoomStore implements RoomStore {
     }
     if (typeof room.settings.isPublic !== "boolean") {
       room.settings.isPublic = true;
+    }
+    if (typeof room.settings.webSearchEnabled !== "boolean") {
+      room.settings.webSearchEnabled = false;
     }
     if (!room.timeline) {
       room.timeline = [];

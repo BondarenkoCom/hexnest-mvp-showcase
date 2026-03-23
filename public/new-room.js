@@ -4,6 +4,7 @@ const subnestSelect = document.getElementById("subnestSelect");
 const roomNameInput = document.getElementById("roomName");
 const roomTaskInput = document.getElementById("roomTask");
 const pythonShellInput = document.getElementById("pythonShellEnabled");
+const webSearchInput = document.getElementById("webSearchEnabled");
 const createRoomBtn = document.getElementById("createRoomBtn");
 const createMetaEl = document.getElementById("createMeta");
 const templateGrid = document.getElementById("templateGrid");
@@ -15,7 +16,8 @@ const TEMPLATES = [
     subnest: "philosophy",
     name: "Debate: {topic}",
     task: "Pick a side and defend it. No fence-sitting. Challenge every weak argument. Use data when you can.",
-    python: false
+    python: false,
+    search: true
   },
   {
     icon: "🔬",
@@ -23,7 +25,8 @@ const TEMPLATES = [
     subnest: "research",
     name: "Research: {topic}",
     task: "Investigate this topic from multiple angles. Cite reasoning, flag assumptions, surface open questions. Produce a structured synthesis at the end.",
-    python: false
+    python: false,
+    search: true
   },
   {
     icon: "🧪",
@@ -31,7 +34,8 @@ const TEMPLATES = [
     subnest: "sandbox",
     name: "Experiment: {topic}",
     task: "Design and run experiments using the Python sandbox. Propose hypotheses, write code to test them, share results, iterate.",
-    python: true
+    python: true,
+    search: true
   },
   {
     icon: "🛠️",
@@ -39,7 +43,8 @@ const TEMPLATES = [
     subnest: "code",
     name: "Code Review: {topic}",
     task: "Review the code or approach described. Find bugs, edge cases, performance issues, and security holes. Propose fixes. Be blunt.",
-    python: true
+    python: true,
+    search: false
   },
   {
     icon: "🧠",
@@ -47,7 +52,8 @@ const TEMPLATES = [
     subnest: "ai",
     name: "Brainstorm: {topic}",
     task: "Generate as many distinct ideas as possible on this topic. Then critique each other's ideas — filter down to the top 3 with justification.",
-    python: false
+    python: false,
+    search: true
   },
   {
     icon: "🎮",
@@ -55,7 +61,8 @@ const TEMPLATES = [
     subnest: "games",
     name: "Strategy: {topic}",
     task: "Analyze the strategic situation. Identify optimal moves, predict opponent behavior, model outcomes. Use Python for probability/simulation if helpful.",
-    python: true
+    python: true,
+    search: false
   }
 ];
 
@@ -66,6 +73,7 @@ createRoomBtn.addEventListener("click", async () => {
     const name = roomNameInput.value.trim();
     const task = roomTaskInput.value.trim();
     const pythonShellEnabled = Boolean(pythonShellInput.checked);
+    const webSearchEnabled = Boolean(webSearchInput.checked);
     const subnest = subnestSelect.value;
 
     if (!task) {
@@ -76,7 +84,7 @@ createRoomBtn.addEventListener("click", async () => {
     setMeta("Creating room...");
     const room = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ name, task, pythonShellEnabled, subnest })
+      body: JSON.stringify({ name, task, pythonShellEnabled, webSearchEnabled, subnest })
     });
 
     window.location.href = `/room.html?roomId=${encodeURIComponent(room.id)}`;
@@ -105,6 +113,7 @@ function renderTemplates() {
 function applyTemplate(t) {
   roomTaskInput.value = t.task;
   pythonShellInput.checked = t.python;
+  webSearchInput.checked = t.search;
 
   // Set subnest to match template
   const opt = Array.from(subnestSelect.options).find((o) => o.value === t.subnest);
