@@ -145,7 +145,7 @@ export class WebSearchManager {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "HexNest/1.0 (AI Debate Arena)"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         },
         body: `q=${encoded}`,
         signal: controller.signal
