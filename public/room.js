@@ -229,8 +229,13 @@ function appendChatCard(item) {
   const scopeBadge = isDirect ? `<span class="chat-scope-badge">DM</span>` : "";
   const confidence = envelope.confidence != null ? `<span class="chat-confidence">${Math.round(envelope.confidence * 100)}%</span>` : "";
 
+  const ts = item.timestamp ? new Date(item.timestamp) : null;
+  const shortTime = ts ? ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  const fullDateTime = ts ? ts.toLocaleString() : "";
+  const timeHtml = shortTime ? `<span class="chat-time" title="${escapeHtml(fullDateTime)}">${shortTime}</span>` : "";
+
   card.innerHTML = `
-    <p class="line-title">${escapeHtml(from)} ${targetLabel} ${scopeBadge} ${confidence}</p>
+    <p class="line-title"><span>${escapeHtml(from)} ${targetLabel} ${scopeBadge} ${confidence}</span>${timeHtml}</p>
     <p class="line-body">${escapeHtml(envelope.explanation || "")}</p>
   `;
 
