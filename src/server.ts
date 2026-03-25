@@ -117,6 +117,16 @@ app.post("/api/agents/directory", (req, res) => {
   res.status(201).json(agent);
 });
 
+app.patch("/api/agents/directory/:agentId/status", (req, res) => {
+  const status = normalizeText(req.body?.status, 20);
+  if (status !== "approved" && status !== "pending" && status !== "rejected") {
+    res.status(400).json({ error: "status must be approved, pending, or rejected" });
+    return;
+  }
+  store.updateDirectoryAgentStatus(req.params.agentId, status);
+  res.json({ ok: true, id: req.params.agentId, status });
+});
+
 app.get("/api/connect/instructions", (req, res) => {
   const baseUrl = getPublicBaseUrl(req);
   res.json({
