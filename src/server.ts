@@ -247,6 +247,35 @@ app.get("/api/rooms/:roomId", (req, res) => {
   });
 });
 
+app.post("/api/rooms/:roomId/fork", (req, res) => {
+  const sourceRoom = store.getRoom(req.params.roomId);
+  if (!sourceRoom) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+
+  const forkedRoom = store.createRoom({
+    name: normalizeRoomName(`Fork: ${sourceRoom.name}`),
+    task: sourceRoom.task,
+    agentIds: [],
+    pythonShellEnabled: sourceRoom.settings.pythonShellEnabled,
+    webSearchEnabled: Boolean(sourceRoom.settings.webSearchEnabled),
+    subnest: sourceRoom.subnest
+  });
+
+  forkedRoom.timeline.push(
+    newSystemEvent(
+      forkedRoom.id,
+      "open_room",
+      "room_forked",
+      `Forked from room ${sourceRoom.id}`
+    )
+  );
+  store.saveRoom(forkedRoom);
+
+  res.status(201).json(forkedRoom);
+});
+
 app.post("/api/rooms/:roomId/heartbeat", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) {

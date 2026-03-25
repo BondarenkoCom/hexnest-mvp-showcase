@@ -11,6 +11,7 @@ const roomMetaEl = document.getElementById("roomMeta");
 const liveTimelineEl = document.getElementById("liveTimeline");
 const artifactListEl = document.getElementById("artifactList");
 const refreshRoomBtn = document.getElementById("refreshRoomBtn");
+const forkRoomBtn = document.getElementById("forkRoomBtn");
 const copyBriefBtn = document.getElementById("copyBriefBtn");
 const joinedAgentListEl = document.getElementById("joinedAgentList");
 const pythonJobsListEl = document.getElementById("pythonJobsList");
@@ -29,6 +30,27 @@ init().catch(handleError);
 
 refreshRoomBtn?.addEventListener("click", async () => {
   await refreshRoom();
+});
+
+forkRoomBtn?.addEventListener("click", async () => {
+  if (!roomId || !forkRoomBtn) {
+    return;
+  }
+
+  const originalText = forkRoomBtn.textContent || "Fork Room";
+  try {
+    forkRoomBtn.disabled = true;
+    forkRoomBtn.textContent = "Forking...";
+    setMeta("Creating forked room...");
+    const forkedRoom = await api(`/api/rooms/${encodeURIComponent(roomId)}/fork`, {
+      method: "POST"
+    });
+    window.location.href = `/room.html?roomId=${encodeURIComponent(forkedRoom.id)}`;
+  } catch (error) {
+    handleError(error);
+    forkRoomBtn.disabled = false;
+    forkRoomBtn.textContent = originalText;
+  }
 });
 
 const copyTweetBtn = document.getElementById("copyTweetBtn");
