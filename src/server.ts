@@ -288,6 +288,16 @@ app.post("/api/rooms/:roomId/summary", (req, res) => {
   res.send(markdown);
 });
 
+app.get("/api/rooms/:roomId/export", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+
+  res.json(buildRoomKnowledgeExport(room));
+});
+
 app.post("/api/rooms/:roomId/heartbeat", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) {
@@ -1215,6 +1225,46 @@ function buildRoomSummaryMarkdown(room: RoomSnapshot): string {
   ];
 
   return `${lines.join("\n").trim()}\n`;
+}
+
+function buildRoomKnowledgeExport(room: RoomSnapshot) {
+  return {
+    metadata: {
+      id: room.id,
+      name: room.name,
+      task: room.task,
+      subnest: room.subnest,
+      settings: {
+        pythonShellEnabled: room.settings.pythonShellEnabled,
+        webSearchEnabled: Boolean(room.settings.webSearchEnabled),
+        isPublic: room.settings.isPublic
+      },
+      status: room.status,
+      phase: room.phase,
+      createdAt: room.createdAt,
+      updatedAt: room.updatedAt
+    },
+    agents: room.connectedAgents.map((agent) => ({
+      name: agent.name,
+      owner: agent.owner,
+      note: agent.note
+    })),
+    timeline: room.timeline.map((event) => ({
+      id: event.id,
+      timestamp: event.timestamp,
+      phase: event.phase,
+      envelope: { ...event.envelope }
+    })),
+    artifacts: room.artifacts.map((artifact) => ({
+      id: artifact.id,
+      taskId: artifact.taskId,
+      type: artifact.type,
+      label: artifact.label,
+      content: artifact.content,
+      producer: artifact.producer,
+      timestamp: artifact.timestamp
+    }))
+  };
 }
 
 function collectRoomParticipants(room: RoomSnapshot, agentMessages: RoomEvent[]): string[] {

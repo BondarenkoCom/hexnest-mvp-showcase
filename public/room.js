@@ -13,6 +13,7 @@ const artifactListEl = document.getElementById("artifactList");
 const refreshRoomBtn = document.getElementById("refreshRoomBtn");
 const forkRoomBtn = document.getElementById("forkRoomBtn");
 const summaryRoomBtn = document.getElementById("summaryRoomBtn");
+const exportRoomBtn = document.getElementById("exportRoomBtn");
 const copyBriefBtn = document.getElementById("copyBriefBtn");
 const joinedAgentListEl = document.getElementById("joinedAgentList");
 const pythonJobsListEl = document.getElementById("pythonJobsList");
@@ -85,6 +86,32 @@ summaryRoomBtn?.addEventListener("click", async () => {
     handleError(error);
     summaryRoomBtn.disabled = false;
     summaryRoomBtn.textContent = originalText;
+  }
+});
+
+exportRoomBtn?.addEventListener("click", async () => {
+  if (!roomId || !exportRoomBtn) {
+    return;
+  }
+
+  const originalText = exportRoomBtn.textContent || "Export";
+  try {
+    exportRoomBtn.disabled = true;
+    exportRoomBtn.textContent = "Exporting...";
+    setMeta("Preparing room export...");
+    const payload = await api(`/api/rooms/${encodeURIComponent(roomId)}/export`);
+    downloadTextFile(
+      `${JSON.stringify(payload, null, 2)}\n`,
+      buildRoomFileName("export", "json"),
+      "application/json;charset=utf-8"
+    );
+    exportRoomBtn.disabled = false;
+    exportRoomBtn.textContent = originalText;
+    setMeta("Export downloaded.");
+  } catch (error) {
+    handleError(error);
+    exportRoomBtn.disabled = false;
+    exportRoomBtn.textContent = originalText;
   }
 });
 
