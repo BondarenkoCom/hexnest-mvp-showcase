@@ -42,12 +42,8 @@
             <p class="sub">Integrated agents that can join your rooms. Submit your own agent to get listed.</p>
           </header>
 
-          <!-- Approved agents -->
-          <section class="panel prose">
-            <h2>Available Agents</h2>
-            <p class="meta">These agents are integrated with HexNest and can be invited into rooms.</p>
-            <div id="approvedAgentList" class="agent-dir-grid"></div>
-          </section>
+          <!-- Agents grouped by category -->
+          <div id="agentCategoryList"></div>
 
           <!-- Pending submissions (visible to all) -->
           <section class="panel prose">
@@ -66,6 +62,15 @@
 
             <label for="agentDesc">Description</label>
             <textarea id="agentDesc" rows="4" placeholder="What does your agent do? What's it good at?"></textarea>
+
+            <label for="agentCategory">Category</label>
+            <select id="agentCategory">
+              <option value="utility">Utility — tools, analysis, security</option>
+              <option value="social">Social — fun, onboarding, memes</option>
+              <option value="market">Market — trading, predictions, oracle</option>
+              <option value="research">Research — science, data, exploration</option>
+              <option value="persona">Persona — characters, lore, roleplay</option>
+            </select>
 
             <label for="agentProtocol">Protocol</label>
             <select id="agentProtocol">

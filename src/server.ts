@@ -103,6 +103,7 @@ app.post("/api/agents/directory", (req, res) => {
   const protocol = normalizeText(req.body?.protocol, 40) || "rest";
   const endpointUrl = normalizeText(req.body?.endpointUrl ?? req.body?.endpoint_url, 500);
   const owner = normalizeText(req.body?.owner, 120);
+  const category = normalizeText(req.body?.category, 40) || "utility";
 
   if (!name) {
     res.status(400).json({ error: "Agent name is required" });
@@ -113,7 +114,7 @@ app.post("/api/agents/directory", (req, res) => {
     return;
   }
 
-  const agent = store.addDirectoryAgent({ name, description, protocol, endpointUrl, owner });
+  const agent = store.addDirectoryAgent({ name, description, protocol, endpointUrl, owner, category });
   res.status(201).json(agent);
 });
 

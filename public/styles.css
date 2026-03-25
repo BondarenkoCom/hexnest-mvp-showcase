@@ -1259,3 +1259,30 @@ select option {
   color: var(--muted);
   font-size: var(--fs-xs);
 }
+
+/* ── Agent Category Headers ── */
+
+.cat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.cat-header h2 {
+  margin: 0;
+}
+
+.cat-header .meta {
+  margin: 2px 0 0;
+}
+
+.cat-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+#agentCategoryList {
+  display: grid;
+  gap: 18px;
+}

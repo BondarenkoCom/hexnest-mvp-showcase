@@ -18,6 +18,7 @@ export interface DirectoryAgent {
   protocol: string;
   endpointUrl: string;
   owner: string;
+  category: string;
   status: "pending" | "approved" | "rejected";
   createdAt: string;
 }
@@ -62,11 +63,19 @@ export class SQLiteRoomStore implements RoomStore {
         protocol TEXT NOT NULL,
         endpoint_url TEXT NOT NULL,
         owner TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'utility',
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_agent_dir_status ON agent_directory(status);
     `);
+
+    // Migration: add category column if missing (existing DBs)
+    try {
+      this.db.exec(`ALTER TABLE agent_directory ADD COLUMN category TEXT NOT NULL DEFAULT 'utility'`);
+    } catch {
+      // column already exists — ignore
+    }
 
     this.getRoomStmt = this.db.prepare(`
       SELECT snapshot_json
@@ -112,18 +121,18 @@ export class SQLiteRoomStore implements RoomStore {
     `);
 
     this.insertAgentDirStmt = this.db.prepare(`
-      INSERT INTO agent_directory (id, name, description, protocol, endpoint_url, owner, status, created_at)
-      VALUES (@id, @name, @description, @protocol, @endpointUrl, @owner, @status, @createdAt)
+      INSERT INTO agent_directory (id, name, description, protocol, endpoint_url, owner, category, status, created_at)
+      VALUES (@id, @name, @description, @protocol, @endpointUrl, @owner, @category, @status, @createdAt)
     `);
 
     this.listAgentDirStmt = this.db.prepare(`
-      SELECT id, name, description, protocol, endpoint_url, owner, status, created_at
+      SELECT id, name, description, protocol, endpoint_url, owner, category, status, created_at
       FROM agent_directory
-      ORDER BY created_at DESC
+      ORDER BY category, created_at DESC
     `);
 
     this.getAgentDirStmt = this.db.prepare(`
-      SELECT id, name, description, protocol, endpoint_url, owner, status, created_at
+      SELECT id, name, description, protocol, endpoint_url, owner, category, status, created_at
       FROM agent_directory
       WHERE id = @id
       LIMIT 1
@@ -188,6 +197,7 @@ export class SQLiteRoomStore implements RoomStore {
     protocol: string;
     endpointUrl: string;
     owner: string;
+    category?: string;
   }): DirectoryAgent {
     const agent: DirectoryAgent = {
       id: newId(),
@@ -196,6 +206,7 @@ export class SQLiteRoomStore implements RoomStore {
       protocol: input.protocol,
       endpointUrl: input.endpointUrl,
       owner: input.owner,
+      category: input.category || "utility",
       status: "pending",
       createdAt: nowIso()
     };
@@ -206,6 +217,7 @@ export class SQLiteRoomStore implements RoomStore {
       protocol: agent.protocol,
       endpointUrl: agent.endpointUrl,
       owner: agent.owner,
+      category: agent.category,
       status: agent.status,
       createdAt: agent.createdAt
     });
@@ -215,7 +227,7 @@ export class SQLiteRoomStore implements RoomStore {
   public listDirectoryAgents(): DirectoryAgent[] {
     const rows = this.listAgentDirStmt.all() as Array<{
       id: string; name: string; description: string; protocol: string;
-      endpoint_url: string; owner: string; status: string; created_at: string;
+      endpoint_url: string; owner: string; category: string; status: string; created_at: string;
     }>;
     return rows.map(r => ({
       id: r.id,
@@ -224,6 +236,7 @@ export class SQLiteRoomStore implements RoomStore {
       protocol: r.protocol,
       endpointUrl: r.endpoint_url,
       owner: r.owner,
+      category: r.category || "utility",
       status: r.status as DirectoryAgent["status"],
       createdAt: r.created_at
     }));
