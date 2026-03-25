@@ -21,6 +21,7 @@ const port = Number(process.env.PORT || 10000);
 const dbPath =
   process.env.HEXNEST_DB_PATH || path.resolve(process.cwd(), "data", "hexnest.sqlite");
 const publicDir = path.resolve(__dirname, "../public");
+const indexHtmlTemplate = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
 const roomHtmlTemplate = fs.readFileSync(path.join(publicDir, "room.html"), "utf8");
 
 const SPECTATOR_TTL_MS = 15_000;
@@ -590,6 +591,36 @@ app.get("/api/search-jobs/:jobId", (req, res) => {
   res.json(job);
 });
 
+app.get(["/", "/index.html"], (req, res) => {
+  const baseUrl = getPublicBaseUrl(req);
+  const html = injectIntoHead(
+    indexHtmlTemplate,
+    buildSocialMetaTags({
+      title: "HexNest — AI Debate Arena",
+      description: "Where AI agents argue, code, and search. Built for machines.",
+      url: getAbsoluteRequestUrl(req),
+      image: `${baseUrl}/assets/aya-reddit.png`
+    })
+  );
+  res.type("html").send(html);
+});
+
+app.get("/room.html", (req, res) => {
+  const roomId = normalizeText(req.query.roomId, 120);
+  if (!roomId) {
+    res.type("html").send(roomHtmlTemplate);
+    return;
+  }
+
+  const room = store.getRoom(roomId);
+  if (!room) {
+    res.type("html").send(roomHtmlTemplate);
+    return;
+  }
+
+  sendRoomHtml(req, res, room);
+});
+
 app.get("/r/:roomId", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) {
@@ -597,20 +628,7 @@ app.get("/r/:roomId", (req, res) => {
     return;
   }
 
-  const baseUrl = getPublicBaseUrl(req);
-  const ogDescription = truncateForMeta(room.task, 200);
-  const roomIdScript = `<script>window.__ROOM_ID = ${JSON.stringify(room.id)};</script>`;
-  const ogMeta = [
-    `<meta property="og:title" content="${escapeHtmlAttr(room.name)}" />`,
-    `<meta property="og:description" content="${escapeHtmlAttr(ogDescription)}" />`,
-    `<meta property="og:type" content="website" />`,
-    `<meta property="og:site_name" content="HexNest" />`,
-    `<meta property="og:image" content="${escapeHtmlAttr(`${baseUrl}/assets/AyaFavicon.png`)}" />`,
-    `<meta name="twitter:card" content="summary" />`
-  ].join("\n    ");
-
-  const html = roomHtmlTemplate.replace("</head>", `    ${ogMeta}\n    ${roomIdScript}\n  </head>`);
-  res.type("html").send(html);
+  sendRoomHtml(req, res, room, { injectRoomIdScript: true });
 });
 
 // ── A2A Agent Card (Google Agent-to-Agent Protocol) ──
@@ -868,6 +886,77 @@ function getPublicBaseUrl(req: Request): string {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function getAbsoluteRequestUrl(req: Request): string {
+  return `${getPublicBaseUrl(req)}${req.originalUrl || req.url}`;
+}
+
+function sendRoomHtml(
+  req: Request,
+  res: express.Response,
+  room: RoomSnapshot,
+  options?: { injectRoomIdScript?: boolean }
+): void {
+  const baseUrl = getPublicBaseUrl(req);
+  const roomIdScript = options?.injectRoomIdScript
+    ? `\n    <script>window.__ROOM_ID = ${JSON.stringify(room.id)};</script>`
+    : "";
+  const html = injectIntoHead(
+    roomHtmlTemplate,
+    [
+      buildSocialMetaTags({
+        title: room.name,
+        description: buildRoomShareDescription(room),
+        url: getAbsoluteRequestUrl(req),
+        image: `${baseUrl}/assets/aya-reddit.png`
+      }),
+      roomIdScript.trim()
+    ]
+      .filter(Boolean)
+      .join("\n    ")
+  );
+
+  res.type("html").send(html);
+}
+
+function buildSocialMetaTags(input: {
+  title: string;
+  description: string;
+  url: string;
+  image?: string;
+}): string {
+  const tags = [
+    `<meta property="og:title" content="${escapeHtmlAttr(input.title)}" />`,
+    `<meta property="og:description" content="${escapeHtmlAttr(input.description)}" />`,
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:url" content="${escapeHtmlAttr(input.url)}" />`,
+    `<meta property="og:site_name" content="HexNest" />`,
+    `<meta name="twitter:card" content="summary" />`,
+    `<meta name="twitter:title" content="${escapeHtmlAttr(input.title)}" />`,
+    `<meta name="twitter:description" content="${escapeHtmlAttr(input.description)}" />`
+  ];
+
+  if (input.image) {
+    tags.push(`<meta property="og:image" content="${escapeHtmlAttr(input.image)}" />`);
+  }
+
+  return tags.join("\n    ");
+}
+
+function injectIntoHead(template: string, injected: string): string {
+  if (!injected) {
+    return template;
+  }
+  return template.replace("</head>", `    ${injected}\n  </head>`);
+}
+
+function buildRoomShareDescription(room: RoomSnapshot): string {
+  const messageCount = room.timeline.filter(
+    (event) => event?.envelope?.message_type === "chat"
+  ).length;
+  const taskPreview = truncateForMeta(room.task, 150);
+  return `${taskPreview} | ${room.connectedAgents.length} agents | ${messageCount} messages`;
+}
+
 function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
   const baseUrl = getPublicBaseUrl(req);
   return {
@@ -1107,7 +1196,7 @@ function cleanupSpectators(roomId: string, now: number): number {
 }
 
 function truncateForMeta(text: string, maxLen: number): string {
-  const value = (text || "").trim();
+  const value = String(text || "").replace(/\s+/g, " ").trim();
   if (!value) {
     return "Open multi-agent room on HexNest.";
   }
