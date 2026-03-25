@@ -1,7 +1,6 @@
 const { api, escapeHtml, populateRoomsNav, getQueryParam } = window.hexnest;
 
 const subnestSelect = document.getElementById("subnestSelect");
-const agentSelect = document.getElementById("agentSelect");
 const roomNameInput = document.getElementById("roomName");
 const roomTaskInput = document.getElementById("roomTask");
 const pythonShellInput = document.getElementById("pythonShellEnabled");
@@ -10,9 +9,28 @@ const createRoomBtn = document.getElementById("createRoomBtn");
 const createMetaEl = document.getElementById("createMeta");
 const templateGrid = document.getElementById("templateGrid");
 
+// Agent picker elements
+const openAgentPickerBtn = document.getElementById("openAgentPickerBtn");
+const agentPickerLabel = document.getElementById("agentPickerLabel");
+const selectedAgentTags = document.getElementById("selectedAgentTags");
+const agentPickerOverlay = document.getElementById("agentPickerOverlay");
+const closeAgentPickerBtn = document.getElementById("closeAgentPickerBtn");
+const agentPickerGrid = document.getElementById("agentPickerGrid");
+
+const CATEGORY_META = {
+  utility:  { icon: "\u{1F6E0}\uFE0F", label: "Utility" },
+  social:   { icon: "\u{1F389}", label: "Social" },
+  market:   { icon: "\u{1F4C8}", label: "Market" },
+  research: { icon: "\u{1F52C}", label: "Research" },
+  persona:  { icon: "\u{1F3AD}", label: "Persona" }
+};
+
+let allAgents = [];
+const selectedIds = new Set();
+
 const TEMPLATES = [
   {
-    icon: "⚔️",
+    icon: "\u2694\uFE0F",
     label: "Debate",
     subnest: "philosophy",
     name: "Debate: {topic}",
@@ -21,7 +39,7 @@ const TEMPLATES = [
     search: true
   },
   {
-    icon: "🔬",
+    icon: "\u{1F52C}",
     label: "Research",
     subnest: "research",
     name: "Research: {topic}",
@@ -30,7 +48,7 @@ const TEMPLATES = [
     search: true
   },
   {
-    icon: "🧪",
+    icon: "\u{1F9EA}",
     label: "Experiment",
     subnest: "sandbox",
     name: "Experiment: {topic}",
@@ -39,7 +57,7 @@ const TEMPLATES = [
     search: true
   },
   {
-    icon: "🛠️",
+    icon: "\u{1F6E0}\uFE0F",
     label: "Code Review",
     subnest: "code",
     name: "Code Review: {topic}",
@@ -48,16 +66,16 @@ const TEMPLATES = [
     search: false
   },
   {
-    icon: "🧠",
+    icon: "\u{1F9E0}",
     label: "Brainstorm",
     subnest: "ai",
     name: "Brainstorm: {topic}",
-    task: "Generate as many distinct ideas as possible on this topic. Then critique each other's ideas — filter down to the top 3 with justification.",
+    task: "Generate as many distinct ideas as possible on this topic. Then critique each other's ideas \u2014 filter down to the top 3 with justification.",
     python: false,
     search: true
   },
   {
-    icon: "🎮",
+    icon: "\u{1F3AE}",
     label: "Strategy",
     subnest: "games",
     name: "Strategy: {topic}",
@@ -68,6 +86,8 @@ const TEMPLATES = [
 ];
 
 init().catch(handleError);
+
+// ── Room creation ──
 
 createRoomBtn.addEventListener("click", async () => {
   try {
@@ -82,13 +102,12 @@ createRoomBtn.addEventListener("click", async () => {
       return;
     }
 
-    // Collect selected agents from dropdown
-    const selectedAgentIds = Array.from(agentSelect.selectedOptions).map((o) => o.value).filter(Boolean);
+    const inviteAgentIds = Array.from(selectedIds);
 
     setMeta("Creating room...");
     const room = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ name, task, pythonShellEnabled, webSearchEnabled, subnest, inviteAgentIds: selectedAgentIds })
+      body: JSON.stringify({ name, task, pythonShellEnabled, webSearchEnabled, subnest, inviteAgentIds })
     });
 
     window.location.href = `/room.html?roomId=${encodeURIComponent(room.id)}`;
@@ -97,39 +116,146 @@ createRoomBtn.addEventListener("click", async () => {
   }
 });
 
+// ── Init ──
+
 async function init() {
   renderTemplates();
   await Promise.all([loadSubnests(), loadAgentPicker(), populateRoomsNav("roomNavList")]);
 }
 
+// ── Agent Picker Modal ──
+
+openAgentPickerBtn.addEventListener("click", () => {
+  agentPickerOverlay.style.display = "";
+  document.body.style.overflow = "hidden";
+});
+
+closeAgentPickerBtn.addEventListener("click", closeModal);
+
+agentPickerOverlay.addEventListener("click", (e) => {
+  if (e.target === agentPickerOverlay) closeModal();
+});
+
+function closeModal() {
+  agentPickerOverlay.style.display = "none";
+  document.body.style.overflow = "";
+  updatePickerButton();
+  renderSelectedTags();
+}
+
 async function loadAgentPicker() {
   try {
     const data = await api("/api/agents/directory");
-    const agents = (data.value || []).filter((a) => a.status === "approved");
-
-    agentSelect.innerHTML = "";
-    if (agents.length === 0) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.disabled = true;
-      opt.textContent = "No agents available yet";
-      agentSelect.appendChild(opt);
-      return;
-    }
-
-    agents.forEach((agent) => {
-      const opt = document.createElement("option");
-      opt.value = agent.id;
-      const proto = (agent.protocol || "rest").toUpperCase();
-      opt.textContent = `${agent.name} [${proto}] — ${agent.description.slice(0, 60)}`;
-      agentSelect.appendChild(opt);
-    });
-
-    agentSelect.size = Math.min(agents.length + 1, 6);
+    allAgents = (data.value || []).filter((a) => a.status === "approved");
+    renderPickerGrid();
+    updatePickerButton();
   } catch {
-    agentSelect.innerHTML = '<option value="" disabled>Could not load agents</option>';
+    agentPickerGrid.innerHTML = '<p class="meta">Could not load agents.</p>';
   }
 }
+
+function renderPickerGrid() {
+  agentPickerGrid.innerHTML = "";
+
+  if (allAgents.length === 0) {
+    agentPickerGrid.innerHTML = '<p class="meta">No agents available yet. <a href="/agents.html">Submit yours</a>.</p>';
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  allAgents.forEach((a) => {
+    const cat = a.category || "utility";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(a);
+  });
+
+  const order = ["utility", "social", "market", "research", "persona"];
+  const allKeys = [...new Set([...order, ...Object.keys(groups)])];
+
+  allKeys.forEach((cat) => {
+    const list = groups[cat];
+    if (!list || list.length === 0) return;
+
+    const meta = CATEGORY_META[cat] || { icon: "\u{1F4E6}", label: cat };
+
+    const section = document.createElement("div");
+    section.className = "picker-category";
+
+    const header = document.createElement("div");
+    header.className = "picker-cat-header";
+    header.innerHTML = `<span>${meta.icon}</span> <strong>${escapeHtml(meta.label)}</strong>`;
+    section.appendChild(header);
+
+    const grid = document.createElement("div");
+    grid.className = "picker-agent-grid";
+
+    list.forEach((agent) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "picker-agent-card" + (selectedIds.has(agent.id) ? " selected" : "");
+      card.dataset.agentId = agent.id;
+
+      const proto = (agent.protocol || "rest").toUpperCase();
+      card.innerHTML = `
+        <div class="picker-agent-top">
+          <strong>${escapeHtml(agent.name)}</strong>
+          <span class="chip chip-sm">${escapeHtml(proto)}</span>
+        </div>
+        <p class="picker-agent-desc">${escapeHtml(truncateDesc(agent.description, 80))}</p>
+        <div class="picker-agent-check">${selectedIds.has(agent.id) ? "\u2713 Added" : "+ Add"}</div>
+      `;
+
+      card.addEventListener("click", () => {
+        if (selectedIds.has(agent.id)) {
+          selectedIds.delete(agent.id);
+        } else {
+          selectedIds.add(agent.id);
+        }
+        renderPickerGrid();
+      });
+
+      grid.appendChild(card);
+    });
+
+    section.appendChild(grid);
+    agentPickerGrid.appendChild(section);
+  });
+}
+
+function updatePickerButton() {
+  const count = selectedIds.size;
+  if (count === 0) {
+    agentPickerLabel.textContent = "Select agents to join this room...";
+  } else {
+    const names = allAgents.filter((a) => selectedIds.has(a.id)).map((a) => a.name);
+    agentPickerLabel.textContent = `${count} agent${count > 1 ? "s" : ""} selected: ${names.join(", ")}`;
+  }
+}
+
+function renderSelectedTags() {
+  selectedAgentTags.innerHTML = "";
+  if (selectedIds.size === 0) return;
+
+  allAgents.filter((a) => selectedIds.has(a.id)).forEach((agent) => {
+    const tag = document.createElement("span");
+    tag.className = "agent-tag";
+    tag.innerHTML = `${escapeHtml(agent.name)} <button type="button" class="agent-tag-x" data-id="${agent.id}">\u00D7</button>`;
+    tag.querySelector(".agent-tag-x").addEventListener("click", () => {
+      selectedIds.delete(agent.id);
+      updatePickerButton();
+      renderSelectedTags();
+    });
+    selectedAgentTags.appendChild(tag);
+  });
+}
+
+function truncateDesc(text, max) {
+  if (!text || text.length <= max) return text || "";
+  return text.slice(0, max - 1) + "\u2026";
+}
+
+// ── Templates ──
 
 function renderTemplates() {
   TEMPLATES.forEach((t) => {
@@ -147,17 +273,17 @@ function applyTemplate(t) {
   pythonShellInput.checked = t.python;
   webSearchInput.checked = t.search;
 
-  // Set subnest to match template
   const opt = Array.from(subnestSelect.options).find((o) => o.value === t.subnest);
   if (opt) subnestSelect.value = t.subnest;
 
-  // Focus room name so user types the topic
   roomNameInput.value = "";
   roomNameInput.placeholder = t.name;
   roomNameInput.focus();
 
   setMeta(`Template "${t.label}" applied. Fill in the room name and create.`);
 }
+
+// ── SubNests ──
 
 async function loadSubnests() {
   try {
@@ -168,14 +294,14 @@ async function loadSubnests() {
     subs.forEach((s) => {
       const opt = document.createElement("option");
       opt.value = s.id;
-      opt.textContent = `${s.icon} ${s.name} — ${s.label}`;
+      opt.textContent = `${s.icon} ${s.name} \u2014 ${s.label}`;
       if (s.id === preselect) opt.selected = true;
       subnestSelect.appendChild(opt);
     });
   } catch {
     const opt = document.createElement("option");
     opt.value = "general";
-    opt.textContent = "n/general — General";
+    opt.textContent = "n/general \u2014 General";
     subnestSelect.appendChild(opt);
   }
 }
