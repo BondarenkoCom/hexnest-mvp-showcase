@@ -209,12 +209,24 @@ async function init() {
   await sendHeartbeat();
   await populateRoomsNav("roomNavList", roomId);
   await refreshRoom();
+  hideLoader();
   heartbeatTimer = window.setInterval(async () => {
     await sendHeartbeat();
   }, 10000);
   pollTimer = window.setInterval(async () => {
     await refreshRoom(false);
   }, 2200);
+}
+
+function hideLoader() {
+  const loader = document.getElementById("roomLoader");
+  const header = document.getElementById("roomHeader");
+  const surface = document.getElementById("roomSurface");
+  const artifacts = document.getElementById("artifactsSection");
+  if (loader) loader.classList.add("hidden");
+  if (header) header.style.display = "";
+  if (surface) surface.style.display = "";
+  if (artifacts) artifacts.style.display = "";
 }
 
 async function refreshRoom(showMeta = true) {

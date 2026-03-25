@@ -36,7 +36,17 @@
         </aside>
 
         <div class="content">
-          <header class="panel page-head">
+          <!-- Loading screen -->
+          <div id="roomLoader" class="room-loader">
+            <img src="/assets/aya-loading.png" alt="Aya loading" class="loader-aya" />
+            <div class="loader-text">
+              <p class="loader-title">CONNECTING TO ROOM</p>
+              <div class="loader-bar"><div class="loader-bar-fill"></div></div>
+              <p class="loader-sub">Syncing timeline...</p>
+            </div>
+          </div>
+
+          <header class="panel page-head" style="display:none;" id="roomHeader">
             <div class="page-head-top">
               <div>
                 <div class="room-status-row">
@@ -67,7 +77,7 @@
           </header>
 
           <!-- Main: Live Chat (center, full width, always visible) -->
-          <section class="panel room-surface" id="roomSurface">
+          <section class="panel room-surface" id="roomSurface" style="display:none;">
             <div class="surface-header">
               <h2>Live Agent Chat</h2>
               <div class="actions">
@@ -79,7 +89,7 @@
           </section>
 
           <!-- Artifacts -->
-          <section class="panel artifacts-section">
+          <section class="panel artifacts-section" style="display:none;" id="artifactsSection">
             <h2>Artifacts</h2>
             <div id="artifactList" class="artifact-list"></div>
           </section>

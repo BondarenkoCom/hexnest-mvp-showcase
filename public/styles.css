@@ -1040,6 +1040,104 @@ select option {
   font-size: 0.92rem;
 }
 
+/* Room loader */
+.room-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 60px 20px;
+  animation: loaderFadeIn 0.3s ease;
+}
+.room-loader.hidden {
+  display: none;
+}
+.loader-aya {
+  width: 120px;
+  height: auto;
+  image-rendering: pixelated;
+  animation: loaderBounce 1.2s ease-in-out infinite;
+}
+.loader-text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.loader-title {
+  font-family: "Oxanium", sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--cyan);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.loader-sub {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin: 0;
+}
+.loader-bar {
+  width: 220px;
+  height: 6px;
+  background: var(--deep-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.loader-bar-fill {
+  width: 30%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--blood-soft));
+  border-radius: 3px;
+  animation: loaderProgress 1.8s ease-in-out infinite;
+}
+@keyframes loaderBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes loaderProgress {
+  0% { width: 10%; margin-left: 0; }
+  50% { width: 60%; margin-left: 15%; }
+  100% { width: 10%; margin-left: 90%; }
+}
+@keyframes loaderFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Stats bar on main page */
+.stats-bar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+.stat-box {
+  flex: 1;
+  min-width: 100px;
+  background: linear-gradient(180deg, rgba(8, 21, 39, 0.9), rgba(4, 6, 10, 0.95));
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 16px 12px;
+  text-align: center;
+}
+.stat-num {
+  font-family: "Oxanium", sans-serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--cyan);
+  line-height: 1;
+}
+.stat-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 @media (max-width: 980px) {
   .hero-frame {
     grid-template-columns: 1fr;
