@@ -1032,6 +1032,14 @@ button[disabled] {
   appearance: auto;
 }
 
+select option {
+  background: #081527;
+  color: #eef5ff;
+  padding: 8px 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.92rem;
+}
+
 @media (max-width: 980px) {
   .hero-frame {
     grid-template-columns: 1fr;
