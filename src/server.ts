@@ -128,6 +128,16 @@ app.patch("/api/agents/directory/:agentId/status", (req, res) => {
   res.json({ ok: true, id: req.params.agentId, status });
 });
 
+app.patch("/api/agents/directory/:agentId/category", (req, res) => {
+  const category = normalizeText(req.body?.category, 40);
+  if (!category) {
+    res.status(400).json({ error: "category is required" });
+    return;
+  }
+  store.updateDirectoryAgentCategory(req.params.agentId, category);
+  res.json({ ok: true, id: req.params.agentId, category });
+});
+
 app.get("/api/connect/instructions", (req, res) => {
   const baseUrl = getPublicBaseUrl(req);
   res.json({

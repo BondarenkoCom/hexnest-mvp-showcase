@@ -246,6 +246,10 @@ export class SQLiteRoomStore implements RoomStore {
     this.updateAgentDirStatusStmt.run({ id, status });
   }
 
+  public updateDirectoryAgentCategory(id: string, category: string): void {
+    this.db.prepare(`UPDATE agent_directory SET category = @category WHERE id = @id`).run({ id, category });
+  }
+
   private persist(room: RoomSnapshot): void {
     const payload = {
       id: room.id,
