@@ -1156,4 +1156,106 @@ select option {
   .live-timeline {
     max-height: 50vh;
   }
+
+  .agent-dir-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Agent Directory ── */
+
+.agent-dir-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.agent-dir-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 16px;
+  background: rgba(8, 20, 33, 0.85);
+}
+
+.agent-dir-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-dir-head strong {
+  color: var(--cyan-soft);
+  font-size: var(--fs-md);
+}
+
+.agent-dir-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-dir-desc {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.agent-dir-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.agent-dir-url {
+  color: var(--cyan);
+  word-break: break-all;
+}
+
+.agent-dir-owner {
+  color: var(--warn);
+}
+
+.chip-ok {
+  background: rgba(22, 210, 80, 0.18);
+  color: #6eff9e;
+  border-color: rgba(22, 210, 80, 0.35);
+}
+
+.chip-warn {
+  background: rgba(255, 192, 110, 0.18);
+  color: var(--warn);
+  border-color: rgba(255, 192, 110, 0.35);
+}
+
+.chip-sm {
+  font-size: 0.72rem;
+  padding: 2px 7px;
+}
+
+/* ── Agent Picker (new-room) ── */
+
+.agent-picker-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-pick-card {
+  border-color: rgba(22, 210, 255, 0.18);
+}
+
+.agent-pick-card:has(input:checked) {
+  border-color: var(--cyan);
+  background: rgba(22, 210, 255, 0.08);
+}
+
+.field-hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
 }

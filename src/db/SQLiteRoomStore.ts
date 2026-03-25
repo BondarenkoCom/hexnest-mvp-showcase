@@ -11,11 +11,26 @@ interface RoomRow {
   snapshot_json: string;
 }
 
+export interface DirectoryAgent {
+  id: string;
+  name: string;
+  description: string;
+  protocol: string;
+  endpointUrl: string;
+  owner: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
 export class SQLiteRoomStore implements RoomStore {
   private readonly db: any;
   private readonly getRoomStmt: any;
   private readonly listRoomsStmt: any;
   private readonly upsertRoomStmt: any;
+  private readonly insertAgentDirStmt: any;
+  private readonly listAgentDirStmt: any;
+  private readonly getAgentDirStmt: any;
+  private readonly updateAgentDirStatusStmt: any;
 
   constructor(dbPath: string) {
     const normalizedPath = path.resolve(dbPath);
@@ -37,6 +52,20 @@ export class SQLiteRoomStore implements RoomStore {
         snapshot_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_rooms_updated_at ON rooms(updated_at DESC);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_directory (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        endpoint_url TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_dir_status ON agent_directory(status);
     `);
 
     this.getRoomStmt = this.db.prepare(`
@@ -80,6 +109,28 @@ export class SQLiteRoomStore implements RoomStore {
         updated_at = excluded.updated_at,
         agent_ids_json = excluded.agent_ids_json,
         snapshot_json = excluded.snapshot_json
+    `);
+
+    this.insertAgentDirStmt = this.db.prepare(`
+      INSERT INTO agent_directory (id, name, description, protocol, endpoint_url, owner, status, created_at)
+      VALUES (@id, @name, @description, @protocol, @endpointUrl, @owner, @status, @createdAt)
+    `);
+
+    this.listAgentDirStmt = this.db.prepare(`
+      SELECT id, name, description, protocol, endpoint_url, owner, status, created_at
+      FROM agent_directory
+      ORDER BY created_at DESC
+    `);
+
+    this.getAgentDirStmt = this.db.prepare(`
+      SELECT id, name, description, protocol, endpoint_url, owner, status, created_at
+      FROM agent_directory
+      WHERE id = @id
+      LIMIT 1
+    `);
+
+    this.updateAgentDirStatusStmt = this.db.prepare(`
+      UPDATE agent_directory SET status = @status WHERE id = @id
     `);
   }
 
@@ -127,6 +178,59 @@ export class SQLiteRoomStore implements RoomStore {
     room.updatedAt = nowIso();
     this.persist(room);
     return room;
+  }
+
+  // ── Agent Directory ──
+
+  public addDirectoryAgent(input: {
+    name: string;
+    description: string;
+    protocol: string;
+    endpointUrl: string;
+    owner: string;
+  }): DirectoryAgent {
+    const agent: DirectoryAgent = {
+      id: newId(),
+      name: input.name,
+      description: input.description,
+      protocol: input.protocol,
+      endpointUrl: input.endpointUrl,
+      owner: input.owner,
+      status: "pending",
+      createdAt: nowIso()
+    };
+    this.insertAgentDirStmt.run({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      protocol: agent.protocol,
+      endpointUrl: agent.endpointUrl,
+      owner: agent.owner,
+      status: agent.status,
+      createdAt: agent.createdAt
+    });
+    return agent;
+  }
+
+  public listDirectoryAgents(): DirectoryAgent[] {
+    const rows = this.listAgentDirStmt.all() as Array<{
+      id: string; name: string; description: string; protocol: string;
+      endpoint_url: string; owner: string; status: string; created_at: string;
+    }>;
+    return rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      protocol: r.protocol,
+      endpointUrl: r.endpoint_url,
+      owner: r.owner,
+      status: r.status as DirectoryAgent["status"],
+      createdAt: r.created_at
+    }));
+  }
+
+  public updateDirectoryAgentStatus(id: string, status: DirectoryAgent["status"]): void {
+    this.updateAgentDirStatusStmt.run({ id, status });
   }
 
   private persist(room: RoomSnapshot): void {
