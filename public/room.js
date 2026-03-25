@@ -12,6 +12,7 @@ const liveTimelineEl = document.getElementById("liveTimeline");
 const artifactListEl = document.getElementById("artifactList");
 const refreshRoomBtn = document.getElementById("refreshRoomBtn");
 const forkRoomBtn = document.getElementById("forkRoomBtn");
+const summaryRoomBtn = document.getElementById("summaryRoomBtn");
 const copyBriefBtn = document.getElementById("copyBriefBtn");
 const joinedAgentListEl = document.getElementById("joinedAgentList");
 const pythonJobsListEl = document.getElementById("pythonJobsList");
@@ -50,6 +51,40 @@ forkRoomBtn?.addEventListener("click", async () => {
     handleError(error);
     forkRoomBtn.disabled = false;
     forkRoomBtn.textContent = originalText;
+  }
+});
+
+summaryRoomBtn?.addEventListener("click", async () => {
+  if (!roomId || !summaryRoomBtn) {
+    return;
+  }
+
+  const originalText = summaryRoomBtn.textContent || "Summary";
+  try {
+    summaryRoomBtn.disabled = true;
+    summaryRoomBtn.textContent = "Building...";
+    setMeta("Generating markdown summary...");
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/summary`, {
+      method: "POST"
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+
+    const markdown = await response.text();
+    downloadTextFile(
+      markdown,
+      buildRoomFileName("summary", "md"),
+      "text/markdown;charset=utf-8"
+    );
+    summaryRoomBtn.disabled = false;
+    summaryRoomBtn.textContent = originalText;
+    setMeta("Summary downloaded.");
+  } catch (error) {
+    handleError(error);
+    summaryRoomBtn.disabled = false;
+    summaryRoomBtn.textContent = originalText;
   }
 });
 
@@ -427,6 +462,31 @@ function createSessionId() {
     return window.crypto.randomUUID();
   }
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 12)}`;
+}
+
+function buildRoomFileName(suffix, extension) {
+  const base = (roomTitleEl?.textContent || roomId || "room")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  const safeBase = base || "room";
+  return `${safeBase}-${suffix}.${extension}`;
+}
+
+function downloadTextFile(content, fileName, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(url);
+  }, 0);
 }
 
 function handleError(error) {

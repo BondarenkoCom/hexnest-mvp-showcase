@@ -276,6 +276,18 @@ app.post("/api/rooms/:roomId/fork", (req, res) => {
   res.status(201).json(forkedRoom);
 });
 
+app.post("/api/rooms/:roomId/summary", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+
+  const markdown = buildRoomSummaryMarkdown(room);
+  res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+  res.send(markdown);
+});
+
 app.post("/api/rooms/:roomId/heartbeat", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) {
@@ -1130,4 +1142,173 @@ function newSystemEvent(
       explanation
     }
   };
+}
+
+function buildRoomSummaryMarkdown(room: RoomSnapshot): string {
+  const agentMessages = room.timeline.filter(
+    (event) =>
+      event?.envelope?.message_type === "chat" &&
+      normalizeParticipantName(event.envelope.from_agent) !== "system"
+  );
+  const participants = collectRoomParticipants(room, agentMessages);
+  const lastTimestamp = getLatestRoomTimestamp(room);
+  const durationMs = Math.max(0, Date.parse(lastTimestamp) - Date.parse(room.createdAt));
+
+  const lines = [
+    `# ${escapeMarkdownInline(room.name || `Room ${room.id.slice(0, 8)}`)}`,
+    "",
+    "## Room",
+    `- ID: ${escapeMarkdownInline(room.id)}`,
+    `- Task: ${escapeMarkdownInline(room.task || "")}`,
+    `- Subnest: ${escapeMarkdownInline(room.subnest || "general")}`,
+    `- Status: ${escapeMarkdownInline(room.status)}`,
+    `- Phase: ${escapeMarkdownInline(room.phase)}`,
+    `- Created: ${escapeMarkdownInline(room.createdAt)}`,
+    `- Updated: ${escapeMarkdownInline(room.updatedAt)}`,
+    "",
+    "## Settings",
+    `- Python shell: ${room.settings.pythonShellEnabled ? "enabled" : "disabled"}`,
+    `- Web search: ${room.settings.webSearchEnabled ? "enabled" : "disabled"}`,
+    `- Public room: ${room.settings.isPublic ? "yes" : "no"}`,
+    "",
+    "## Agents",
+    participants.length > 0
+      ? participants.map((name) => `- ${escapeMarkdownInline(name)}`).join("\n")
+      : "- None",
+    "",
+    "## Stats",
+    `- Message count: ${agentMessages.length}`,
+    `- Duration: ${formatDuration(durationMs)}`,
+    `- Agent count: ${participants.length}`,
+    "",
+    "## Agent Messages",
+    agentMessages.length > 0
+      ? agentMessages
+          .map((event, index) =>
+            [
+              `### ${index + 1}. ${escapeMarkdownInline(event.envelope.from_agent)}`,
+              `- Timestamp: ${escapeMarkdownInline(event.timestamp)}`,
+              `- Scope: ${escapeMarkdownInline(event.envelope.scope)}`,
+              `- Target: ${escapeMarkdownInline(String(event.envelope.to_agent || "room"))}`,
+              "",
+              escapeMarkdownBlock(event.envelope.explanation || "")
+            ].join("\n")
+          )
+          .join("\n\n")
+      : "_No agent messages._",
+    "",
+    "## Artifacts",
+    room.artifacts.length > 0
+      ? room.artifacts
+          .map((artifact, index) =>
+            [
+              `### ${index + 1}. ${escapeMarkdownInline(artifact.label || `Artifact ${index + 1}`)}`,
+              `- Type: ${escapeMarkdownInline(artifact.type)}`,
+              `- Producer: ${escapeMarkdownInline(artifact.producer || "unknown")}`,
+              `- Timestamp: ${escapeMarkdownInline(artifact.timestamp)}`,
+              "",
+              toIndentedCodeBlock(artifact.content || "")
+            ].join("\n")
+          )
+          .join("\n\n")
+      : "_No artifacts._"
+  ];
+
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function collectRoomParticipants(room: RoomSnapshot, agentMessages: RoomEvent[]): string[] {
+  const names = new Map<string, string>();
+
+  for (const agent of room.connectedAgents) {
+    const name = normalizeParticipantName(agent.name);
+    if (name && name !== "system") {
+      names.set(name, agent.name);
+    }
+  }
+
+  for (const event of agentMessages) {
+    const name = normalizeParticipantName(event.envelope.from_agent);
+    if (name && name !== "system") {
+      names.set(name, event.envelope.from_agent);
+    }
+  }
+
+  return Array.from(names.values());
+}
+
+function normalizeParticipantName(raw: unknown): string {
+  if (typeof raw !== "string") {
+    return "";
+  }
+  return raw.trim().toLowerCase();
+}
+
+function getLatestRoomTimestamp(room: RoomSnapshot): string {
+  const candidates = [room.updatedAt, ...room.timeline.map((event) => event.timestamp)].filter(Boolean);
+  let latest = room.createdAt;
+
+  for (const value of candidates) {
+    if (value.localeCompare(latest) > 0) {
+      latest = value;
+    }
+  }
+
+  return latest;
+}
+
+function formatDuration(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return "0s";
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+
+  if (days > 0) {
+    parts.push(`${days}d`);
+  }
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`);
+  }
+  if (seconds > 0 || parts.length === 0) {
+    parts.push(`${seconds}s`);
+  }
+
+  return parts.join(" ");
+}
+
+function escapeMarkdownInline(value: string): string {
+  return String(value)
+    .replaceAll("\\", "\\\\")
+    .replace(/([`*_{}\[\]()#+\-.!|>])/g, "\\$1");
+}
+
+function escapeMarkdownBlock(value: string): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "_No content._";
+  }
+  return normalized
+    .split(/\r?\n/)
+    .map((line) => `> ${escapeMarkdownInline(line)}`)
+    .join("\n");
+}
+
+function toIndentedCodeBlock(value: string): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "_No content._";
+  }
+  return normalized
+    .split(/\r?\n/)
+    .map((line) => `    ${line}`)
+    .join("\n");
 }
