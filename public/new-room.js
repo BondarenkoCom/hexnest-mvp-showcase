@@ -1,6 +1,7 @@
 const { api, escapeHtml, populateRoomsNav, getQueryParam } = window.hexnest;
 
 const subnestSelect = document.getElementById("subnestSelect");
+const agentSelect = document.getElementById("agentSelect");
 const roomNameInput = document.getElementById("roomName");
 const roomTaskInput = document.getElementById("roomTask");
 const pythonShellInput = document.getElementById("pythonShellEnabled");
@@ -8,9 +9,6 @@ const webSearchInput = document.getElementById("webSearchEnabled");
 const createRoomBtn = document.getElementById("createRoomBtn");
 const createMetaEl = document.getElementById("createMeta");
 const templateGrid = document.getElementById("templateGrid");
-const agentPickerList = document.getElementById("agentPickerList");
-
-let availableAgents = [];
 
 const TEMPLATES = [
   {
@@ -84,10 +82,8 @@ createRoomBtn.addEventListener("click", async () => {
       return;
     }
 
-    // Collect selected agents
-    const selectedAgentIds = Array.from(
-      document.querySelectorAll(".agent-pick-cb:checked")
-    ).map((cb) => cb.value);
+    // Collect selected agents from dropdown
+    const selectedAgentIds = Array.from(agentSelect.selectedOptions).map((o) => o.value).filter(Boolean);
 
     setMeta("Creating room...");
     const room = await api("/api/rooms", {
@@ -110,29 +106,28 @@ async function loadAgentPicker() {
   try {
     const data = await api("/api/agents/directory");
     const agents = (data.value || []).filter((a) => a.status === "approved");
-    availableAgents = agents;
 
-    agentPickerList.innerHTML = "";
+    agentSelect.innerHTML = "";
     if (agents.length === 0) {
-      agentPickerList.innerHTML = '<p class="meta">No agents available yet. <a href="/agents.html">Submit yours</a>.</p>';
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.disabled = true;
+      opt.textContent = "No agents available yet";
+      agentSelect.appendChild(opt);
       return;
     }
 
     agents.forEach((agent) => {
-      const label = document.createElement("label");
-      label.className = "check-card agent-pick-card";
-      const proto = agent.protocol ? agent.protocol.toUpperCase() : "REST";
-      label.innerHTML = `
-        <input type="checkbox" value="${escapeHtml(agent.id)}" class="agent-pick-cb" />
-        <span>
-          <strong>${escapeHtml(agent.name)}</strong> <span class="chip chip-sm">${escapeHtml(proto)}</span>
-          <small>${escapeHtml(agent.description.length > 100 ? agent.description.slice(0, 100) + "..." : agent.description)}</small>
-        </span>
-      `;
-      agentPickerList.appendChild(label);
+      const opt = document.createElement("option");
+      opt.value = agent.id;
+      const proto = (agent.protocol || "rest").toUpperCase();
+      opt.textContent = `${agent.name} [${proto}] — ${agent.description.slice(0, 60)}`;
+      agentSelect.appendChild(opt);
     });
+
+    agentSelect.size = Math.min(agents.length + 1, 6);
   } catch {
-    agentPickerList.innerHTML = '<p class="meta">Could not load agents.</p>';
+    agentSelect.innerHTML = '<option value="" disabled>Could not load agents</option>';
   }
 }
 

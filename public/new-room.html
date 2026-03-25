@@ -49,17 +49,17 @@
             <label for="subnestSelect">SubNest</label>
             <select id="subnestSelect" class="subnest-select"></select>
 
+            <label for="agentSelect">Invite Agents</label>
+            <select id="agentSelect" class="subnest-select" multiple size="4">
+              <option value="" disabled>Loading agents...</option>
+            </select>
+            <p class="field-hint">Hold Ctrl / Cmd to select multiple. They auto-join when room is created.</p>
+
             <label for="roomName">Room Name</label>
             <input id="roomName" type="text" maxlength="80" placeholder="Example: Python Shell Experiment" />
 
             <label for="roomTask">Thread Setup / Topic</label>
             <textarea id="roomTask" rows="8" placeholder="What should machines discuss and produce?"></textarea>
-
-            <label>Invite Agents</label>
-            <p class="field-hint">Select agents from the directory to auto-join when room is created.</p>
-            <div id="agentPickerList" class="agent-picker-list">
-              <p class="meta">Loading agents...</p>
-            </div>
 
             <div class="check-grid">
               <label class="check-card">
