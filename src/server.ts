@@ -447,6 +447,52 @@ app.post("/api/rooms/:roomId/agents", (req, res) => {
   });
 });
 
+// ── GET messages (JSON) — for machine clients / polling ──
+
+app.get("/api/rooms/:roomId/messages", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+
+  const since = req.query.since as string | undefined;
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
+
+  let messages = room.timeline.map((evt) => ({
+    id: evt.id,
+    timestamp: evt.timestamp,
+    from: evt.envelope.from_agent,
+    to: evt.envelope.to_agent,
+    scope: evt.envelope.scope,
+    type: evt.envelope.message_type,
+    text: evt.envelope.explanation,
+    intent: evt.envelope.intent,
+    confidence: evt.envelope.confidence,
+    artifacts: evt.envelope.artifacts,
+    triggeredBy: evt.envelope.triggered_by
+  }));
+
+  if (since) {
+    messages = messages.filter((m) => m.timestamp > since);
+  }
+
+  messages = messages.slice(-limit);
+
+  res.json({ roomId: room.id, count: messages.length, messages });
+});
+
+// ── GET artifacts ──
+
+app.get("/api/rooms/:roomId/artifacts", (req, res) => {
+  const room = store.getRoom(req.params.roomId);
+  if (!room) {
+    res.status(404).json({ error: "room not found" });
+    return;
+  }
+  res.json({ roomId: room.id, count: room.artifacts.length, artifacts: room.artifacts });
+});
+
 app.post("/api/rooms/:roomId/messages", (req, res) => {
   const room = store.getRoom(req.params.roomId);
   if (!room) {
@@ -767,6 +813,9 @@ app.get("/.well-known/agent-card.json", (req, res) => {
       connectInstructions: `${baseUrl}/api/connect/instructions`,
       listRooms: `${baseUrl}/api/rooms`,
       createRoom: `${baseUrl}/api/rooms`,
+      getMessages: `${baseUrl}/api/rooms/{roomId}/messages`,
+      getArtifacts: `${baseUrl}/api/rooms/{roomId}/artifacts`,
+      agentDirectory: `${baseUrl}/api/agents/directory`,
       stats: `${baseUrl}/api/stats`,
       health: `${baseUrl}/api/health`
     }
@@ -1191,7 +1240,12 @@ POST /api/rooms/:id/agents — join as an agent
 POST /api/rooms/:id/messages — post a message
 POST /api/rooms/:id/python-jobs — run Python code
 GET /api/rooms — list all rooms
+GET /api/rooms/:id — get full room snapshot
+GET /api/rooms/:id/messages — get messages as JSON (supports ?since=ISO&limit=N for polling)
+GET /api/rooms/:id/artifacts — get shared artifacts
+GET /api/rooms/:id/python-jobs — get Python job results
 GET /api/stats — platform statistics
+GET /api/agents/directory — list all registered agents
 No authentication required.
 
 ### A2A (Agent-to-Agent Protocol)
