@@ -11,6 +11,18 @@ interface RoomRow {
   snapshot_json: string;
 }
 
+interface SharedLinkRow {
+  id: string;
+  room_id: string;
+  message_id: string;
+  short_code: string;
+  created_at: string;
+}
+
+interface CountRow {
+  count: number;
+}
+
 export interface DirectoryAgent {
   id: string;
   name: string;
@@ -23,6 +35,14 @@ export interface DirectoryAgent {
   createdAt: string;
 }
 
+export interface SharedLink {
+  id: string;
+  roomId: string;
+  messageId: string;
+  shortCode: string;
+  createdAt: string;
+}
+
 export class SQLiteRoomStore implements RoomStore {
   private readonly db: any;
   private readonly getRoomStmt: any;
@@ -32,6 +52,10 @@ export class SQLiteRoomStore implements RoomStore {
   private readonly listAgentDirStmt: any;
   private readonly getAgentDirStmt: any;
   private readonly updateAgentDirStatusStmt: any;
+  private readonly getSharedLinkByMessageStmt: any;
+  private readonly getSharedLinkByShortCodeStmt: any;
+  private readonly insertSharedLinkStmt: any;
+  private readonly countSharedLinksByRoomStmt: any;
 
   constructor(dbPath: string) {
     const normalizedPath = path.resolve(dbPath);
@@ -68,6 +92,19 @@ export class SQLiteRoomStore implements RoomStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_agent_dir_status ON agent_directory(status);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS shared_links (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        short_code TEXT UNIQUE NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_links_room_message
+      ON shared_links(room_id, message_id);
+      CREATE INDEX IF NOT EXISTS idx_shared_links_room_id ON shared_links(room_id);
     `);
 
     // Migration: add category column if missing (existing DBs)
@@ -140,6 +177,31 @@ export class SQLiteRoomStore implements RoomStore {
 
     this.updateAgentDirStatusStmt = this.db.prepare(`
       UPDATE agent_directory SET status = @status WHERE id = @id
+    `);
+
+    this.getSharedLinkByMessageStmt = this.db.prepare(`
+      SELECT id, room_id, message_id, short_code, created_at
+      FROM shared_links
+      WHERE room_id = @roomId AND message_id = @messageId
+      LIMIT 1
+    `);
+
+    this.getSharedLinkByShortCodeStmt = this.db.prepare(`
+      SELECT id, room_id, message_id, short_code, created_at
+      FROM shared_links
+      WHERE short_code = @shortCode
+      LIMIT 1
+    `);
+
+    this.insertSharedLinkStmt = this.db.prepare(`
+      INSERT INTO shared_links (id, room_id, message_id, short_code, created_at)
+      VALUES (@id, @roomId, @messageId, @shortCode, @createdAt)
+    `);
+
+    this.countSharedLinksByRoomStmt = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM shared_links
+      WHERE room_id = @roomId
     `);
   }
 
@@ -250,6 +312,59 @@ export class SQLiteRoomStore implements RoomStore {
     this.db.prepare(`UPDATE agent_directory SET category = @category WHERE id = @id`).run({ id, category });
   }
 
+  public getSharedLinkForMessage(roomId: string, messageId: string): SharedLink | undefined {
+    const row = this.getSharedLinkByMessageStmt.get({ roomId, messageId }) as SharedLinkRow | undefined;
+    return row ? this.mapSharedLink(row) : undefined;
+  }
+
+  public getSharedLinkByShortCode(shortCode: string): SharedLink | undefined {
+    const row = this.getSharedLinkByShortCodeStmt.get({ shortCode }) as SharedLinkRow | undefined;
+    return row ? this.mapSharedLink(row) : undefined;
+  }
+
+  public getOrCreateSharedLink(roomId: string, messageId: string, shortCode: string): SharedLink {
+    const existing = this.getSharedLinkForMessage(roomId, messageId);
+    if (existing) {
+      return existing;
+    }
+
+    const link: SharedLink = {
+      id: newId(),
+      roomId,
+      messageId,
+      shortCode,
+      createdAt: nowIso()
+    };
+
+    try {
+      this.insertSharedLinkStmt.run({
+        id: link.id,
+        roomId: link.roomId,
+        messageId: link.messageId,
+        shortCode: link.shortCode,
+        createdAt: link.createdAt
+      });
+      return link;
+    } catch (error) {
+      const byMessage = this.getSharedLinkForMessage(roomId, messageId);
+      if (byMessage) {
+        return byMessage;
+      }
+
+      const byShortCode = this.getSharedLinkByShortCode(shortCode);
+      if (byShortCode && (byShortCode.roomId !== roomId || byShortCode.messageId !== messageId)) {
+        throw new Error(`shared short code collision: ${shortCode}`);
+      }
+
+      throw error;
+    }
+  }
+
+  public countSharedLinksByRoom(roomId: string): number {
+    const row = this.countSharedLinksByRoomStmt.get({ roomId }) as CountRow | undefined;
+    return Number(row?.count || 0);
+  }
+
   private persist(room: RoomSnapshot): void {
     const payload = {
       id: room.id,
@@ -312,5 +427,15 @@ export class SQLiteRoomStore implements RoomStore {
       room.pythonJobs = [];
     }
     return room;
+  }
+
+  private mapSharedLink(row: SharedLinkRow): SharedLink {
+    return {
+      id: row.id,
+      roomId: row.room_id,
+      messageId: row.message_id,
+      shortCode: row.short_code,
+      createdAt: row.created_at
+    };
   }
 }

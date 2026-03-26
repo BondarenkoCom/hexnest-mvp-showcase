@@ -1,6 +1,7 @@
 const SPECTATOR_TTL_MS = 15_000;
 const spectators = new Map<string, Set<string>>();
 const spectatorSeenAt = new Map<string, Map<string, number>>();
+const spectatorSessions = new Map<string, Set<string>>();
 
 export function upsertSpectator(roomId: string, sessionId: string): number {
   const now = Date.now();
@@ -16,13 +17,24 @@ export function upsertSpectator(roomId: string, sessionId: string): number {
     spectatorSeenAt.set(roomId, roomSeenAt);
   }
 
+  let roomSessions = spectatorSessions.get(roomId);
+  if (!roomSessions) {
+    roomSessions = new Set<string>();
+    spectatorSessions.set(roomId, roomSessions);
+  }
+
   roomSpectators.add(sessionId);
   roomSeenAt.set(sessionId, now);
+  roomSessions.add(sessionId);
   return cleanupSpectators(roomId, now);
 }
 
 export function getViewerCount(roomId: string): number {
   return cleanupSpectators(roomId, Date.now());
+}
+
+export function getTotalViewerCount(roomId: string): number {
+  return spectatorSessions.get(roomId)?.size || 0;
 }
 
 function cleanupSpectators(roomId: string, now: number): number {

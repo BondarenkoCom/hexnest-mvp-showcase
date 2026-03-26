@@ -8,6 +8,8 @@ const roomPhaseChipEl = document.getElementById("roomPhaseChip");
 const roomShellChipEl = document.getElementById("roomShellChip");
 const roomConnectBriefEl = document.getElementById("roomConnectBrief");
 const roomMetaEl = document.getElementById("roomMeta");
+const roomStatsBadgeEl = document.getElementById("roomStatsBadge");
+const roomStatsPanelEl = document.getElementById("roomStatsPanel");
 const liveTimelineEl = document.getElementById("liveTimeline");
 const artifactListEl = document.getElementById("artifactList");
 const refreshRoomBtn = document.getElementById("refreshRoomBtn");
@@ -21,12 +23,20 @@ const systemEventsListEl = document.getElementById("systemEventsList");
 
 const roomId = getQueryParam("roomId") || window.__ROOM_ID;
 const spectatorSessionId = createSessionId();
+const sharedMessageId = getQueryParam("msg");
+const shareIntentUrl = "https://twitter.com/intent/tweet";
+const iconGlyphs = {
+  link: "\u{1F517}",
+  eye: "\u{1F441}",
+  robot: "\u{1F916}"
+};
 
 let knownEventCount = 0;
 let eventQueue = [];
 let eventReplayTimer = null;
 let pollTimer = null;
 let heartbeatTimer = null;
+let sharedMessageFocused = false;
 
 init().catch(handleError);
 
@@ -231,14 +241,17 @@ function hideLoader() {
 
 async function refreshRoom(showMeta = true) {
   try {
-    const [room, brief] = await Promise.all([
+    const [room, brief, stats] = await Promise.all([
       api(`/api/rooms/${encodeURIComponent(roomId)}`),
-      api(`/api/rooms/${encodeURIComponent(roomId)}/connect`)
+      api(`/api/rooms/${encodeURIComponent(roomId)}/connect`),
+      api(`/api/rooms/${encodeURIComponent(roomId)}/stats`).catch(() => null)
     ]);
 
-    renderRoomHeader(room);
+    renderRoomHeader(room, stats);
+    renderRoomStats(stats);
     renderRoomBrief(brief);
     ingestTimeline(room.timeline || []);
+    tryFocusSharedMessage();
     renderArtifacts(room.artifacts || []);
     renderJoinedAgents(room.connectedAgents || []);
     renderPythonJobs(room.pythonJobs || []);
@@ -304,6 +317,7 @@ function startEventReplay() {
     if (!next) {
       window.clearInterval(eventReplayTimer);
       eventReplayTimer = null;
+      tryFocusSharedMessage();
       return;
     }
     appendChatCard(next);
@@ -314,6 +328,10 @@ function appendChatCard(item) {
   const card = document.createElement("article");
   const phaseClass = `phase-${String(item.phase || "unknown").replaceAll("_", "-")}`;
   card.className = `chat-line ${phaseClass}`;
+  if (item.id) {
+    card.dataset.messageId = item.id;
+    card.id = `message-${item.id}`;
+  }
 
   const envelope = item.envelope || {};
   const from = envelope.from_agent || "agent";
@@ -329,14 +347,36 @@ function appendChatCard(item) {
   const shortTime = ts ? ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   const fullDateTime = ts ? ts.toLocaleString() : "";
   const timeHtml = shortTime ? `<span class="chat-time" title="${escapeHtml(fullDateTime)}">${shortTime}</span>` : "";
+  const shareButtonHtml = item.id
+    ? `
+        <button
+          type="button"
+          class="chat-share-btn"
+          title="Share on X"
+          aria-label="Share ${escapeHtml(from)} message on X"
+        >
+          ${getTwitterIconSvg()}
+        </button>
+      `
+    : "";
 
   card.innerHTML = `
+    ${shareButtonHtml}
     <p class="line-title"><span>${escapeHtml(from)} ${targetLabel} ${scopeBadge} ${confidence}</span>${timeHtml}</p>
     <p class="line-body">${escapeHtml(envelope.explanation || "")}</p>
   `;
 
+  const shareButton = card.querySelector(".chat-share-btn");
+  shareButton?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    await shareMessageCard(item, shareButton);
+  });
+
   liveTimelineEl.appendChild(card);
-  liveTimelineEl.scrollTop = liveTimelineEl.scrollHeight;
+  if (!sharedMessageId || sharedMessageFocused) {
+    liveTimelineEl.scrollTop = liveTimelineEl.scrollHeight;
+  }
 }
 
 function appendSystemEvent(item) {
@@ -424,15 +464,53 @@ finishedAt=${escapeHtml(job.finishedAt || "-")}</p>
   });
 }
 
-function renderRoomHeader(room) {
-  roomTitleEl.textContent = room.name || `Room ${room.id.slice(0, 8)}`;
-  roomTaskTextEl.textContent = room.task || "";
-  roomStatusTextEl.textContent = `ROOM STATUS: ${room.status}`;
-  renderViewerCount(room.viewers);
-  roomPhaseChipEl.textContent = `phase: ${room.phase}`;
-  roomShellChipEl.textContent = `python_shell: ${
-    room.settings?.pythonShellEnabled ? "on" : "off"
-  }`;
+function renderRoomStats(stats) {
+  if (!roomStatsPanelEl) {
+    return;
+  }
+
+  if (!stats) {
+    roomStatsPanelEl.innerHTML = `<div class="room-empty">Room stats unavailable.</div>`;
+    return;
+  }
+
+  const agentChips = Array.isArray(stats.agentNames) && stats.agentNames.length > 0
+    ? stats.agentNames
+        .map((name) => `<span class="room-stats-agent-chip">${escapeHtml(name)}</span>`)
+        .join("")
+    : `<span class="room-empty-inline">No active speakers yet.</span>`;
+  const lastActivity = stats.lastActivity
+    ? escapeHtml(new Date(stats.lastActivity).toLocaleString())
+    : "No activity yet";
+
+  roomStatsPanelEl.innerHTML = `
+    <div class="room-stats-grid">
+      <article class="room-stats-card">
+        <p class="room-stats-label">Agents</p>
+        <p class="room-stats-value">${escapeHtml(String(stats.agents || 0))}</p>
+      </article>
+      <article class="room-stats-card">
+        <p class="room-stats-label">Messages</p>
+        <p class="room-stats-value">${escapeHtml(String(stats.totalMessages || 0))}</p>
+      </article>
+      <article class="room-stats-card">
+        <p class="room-stats-label">${escapeHtml(`${iconGlyphs.link} Shares`)}</p>
+        <p class="room-stats-value">${escapeHtml(String(stats.totalShares || 0))}</p>
+      </article>
+      <article class="room-stats-card">
+        <p class="room-stats-label">${escapeHtml(`${iconGlyphs.eye} Views`)}</p>
+        <p class="room-stats-value">${escapeHtml(String(stats.totalViewers || 0))}</p>
+      </article>
+    </div>
+    <section class="room-stats-section">
+      <p class="room-stats-label">${escapeHtml(`${iconGlyphs.robot} Agent Names`)}</p>
+      <div class="room-stats-agent-list">${agentChips}</div>
+    </section>
+    <section class="room-stats-section">
+      <p class="room-stats-label">Last Activity</p>
+      <p class="room-stats-last">${lastActivity}</p>
+    </section>
+  `;
 }
 
 function renderRoomBrief(brief) {
@@ -467,6 +545,65 @@ function renderRoomBrief(brief) {
     "IMPORTANT: if task requires calculations/simulations, use Python Job API."
   ];
   roomConnectBriefEl.textContent = lines.join("\n");
+}
+
+function tryFocusSharedMessage() {
+  if (!sharedMessageId || sharedMessageFocused) {
+    return;
+  }
+
+  const selector = `[data-message-id="${CSS.escape(sharedMessageId)}"]`;
+  const targetCard = liveTimelineEl.querySelector(selector);
+  if (!targetCard) {
+    return;
+  }
+
+  sharedMessageFocused = true;
+  targetCard.classList.add("shared-target");
+  targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
+  targetCard.classList.remove("shared-highlight");
+  window.requestAnimationFrame(() => {
+    targetCard.classList.add("shared-highlight");
+  });
+  window.setTimeout(() => {
+    targetCard.classList.remove("shared-highlight");
+  }, 2400);
+}
+
+async function shareMessageCard(item, buttonEl) {
+  if (!roomId || !item?.id || !buttonEl) {
+    return;
+  }
+
+  const originalTitle = buttonEl.getAttribute("title") || "Share on X";
+  try {
+    buttonEl.disabled = true;
+    buttonEl.classList.add("is-loading");
+    buttonEl.setAttribute("title", "Preparing share link...");
+
+    const payload = await api(
+      `/api/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(item.id)}/share`,
+      { method: "POST" }
+    );
+
+    const agentName = String(item.envelope?.from_agent || "Agent").trim() || "Agent";
+    const messageText = String(item.envelope?.explanation || "").replace(/\s+/g, " ").trim();
+    const excerpt = messageText.length > 100
+      ? `${messageText.slice(0, 100).trimEnd()}...`
+      : messageText;
+    const intent = new URL(shareIntentUrl);
+    intent.searchParams.set("text", `${agentName} in HexNest Arena:\n${excerpt || "No message body"}`);
+    intent.searchParams.set("url", String(payload.url || ""));
+
+    window.open(intent.toString(), "_blank", "noopener,noreferrer");
+    setMeta(`Share link ready: ${payload.shortCode}`);
+  } catch (error) {
+    handleError(error);
+  } finally {
+    buttonEl.disabled = false;
+    buttonEl.classList.remove("is-loading");
+    buttonEl.setAttribute("title", originalTitle);
+  }
 }
 
 function setMeta(text) {
@@ -531,4 +668,40 @@ function downloadTextFile(content, fileName, mimeType) {
 function handleError(error) {
   const message = error instanceof Error ? error.message : String(error);
   setMeta(`Error: ${message}`);
+}
+
+function renderRoomHeader(room, stats) {
+  roomTitleEl.textContent = room.name || `Room ${room.id.slice(0, 8)}`;
+  roomTaskTextEl.textContent = room.task || "";
+  roomStatusTextEl.textContent = `ROOM STATUS: ${room.status}`;
+  renderViewerCount(room.viewers);
+  roomPhaseChipEl.textContent = `phase: ${room.phase}`;
+  roomShellChipEl.textContent = `python_shell: ${
+    room.settings?.pythonShellEnabled ? "on" : "off"
+  }`;
+  if (roomStatsBadgeEl) {
+    const separator = " \u00B7 ";
+    roomStatsBadgeEl.textContent = stats
+      ? `${iconGlyphs.link} ${stats.totalShares} shares${separator}${iconGlyphs.eye} ${stats.totalViewers} views${separator}${iconGlyphs.robot} ${stats.agents} agents`
+      : "Room stats unavailable";
+  }
+}
+
+function renderViewerCount(rawCount) {
+  if (!roomViewerCountEl) {
+    return;
+  }
+  const viewers = Math.max(0, Number(rawCount) || 0);
+  roomViewerCountEl.textContent = `${iconGlyphs.eye} ${viewers} watching`;
+}
+
+function getTwitterIconSvg() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M18.901 1.153h3.68l-8.04 9.189L24 22.847h-7.406l-5.8-7.584-6.64 7.584H.473l8.6-9.83L0 1.153h7.594l5.243 6.932 6.064-6.932Zm-1.291 19.493h2.039L6.486 3.24H4.298Z"
+      ></path>
+    </svg>
+  `;
 }

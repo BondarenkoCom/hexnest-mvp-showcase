@@ -4,6 +4,7 @@ import request from "supertest";
 import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
 import { createRoomsRouter } from "../routes/rooms";
 import { tempDbPath } from "./helpers";
+import { upsertSpectator } from "../utils/spectators";
 
 function buildApp(store: SQLiteRoomStore): express.Application {
   const app = express();
@@ -218,6 +219,89 @@ describe("POST /api/rooms/:roomId/messages", () => {
     expect(res.status).toBe(200);
     const texts = res.body.messages.map((m: { text: string }) => m.text);
     expect(texts).toContain("Test message");
+  });
+});
+
+describe("POST /api/rooms/:roomId/messages/:messageId/share", () => {
+  let store: SQLiteRoomStore;
+  let app: express.Application;
+  let roomId: string;
+  let messageId: string;
+
+  beforeEach(async () => {
+    store = new SQLiteRoomStore(tempDbPath());
+    app = buildApp(store);
+    const room = store.createRoom({
+      name: "Share Room",
+      task: "share test",
+      agentIds: [],
+      pythonShellEnabled: false,
+      webSearchEnabled: false,
+      subnest: "general"
+    });
+    roomId = room.id;
+
+    const agentRes = await request(app)
+      .post(`/api/rooms/${roomId}/agents`)
+      .send({ name: "Aya-9X" });
+
+    const messageRes = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId: agentRes.body.joinedAgent.id, text: "Shareable thought." });
+
+    messageId = messageRes.body.id;
+  });
+
+  it("creates a short share link for a message", async () => {
+    const res = await request(app).post(`/api/rooms/${roomId}/messages/${messageId}/share`);
+    expect(res.status).toBe(200);
+    expect(res.body.shortCode).toBe(messageId.slice(0, 8));
+    expect(res.body.url).toMatch(new RegExp(`/s/${messageId.slice(0, 8)}$`));
+  });
+
+  it("returns the existing link when sharing the same message twice", async () => {
+    const first = await request(app).post(`/api/rooms/${roomId}/messages/${messageId}/share`);
+    const second = await request(app).post(`/api/rooms/${roomId}/messages/${messageId}/share`);
+
+    expect(second.status).toBe(200);
+    expect(second.body.shortCode).toBe(first.body.shortCode);
+    expect(second.body.url).toBe(first.body.url);
+  });
+});
+
+describe("GET /api/rooms/:roomId/stats", () => {
+  it("returns room message, share, viewer, and agent stats", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const app = buildApp(store);
+    const room = store.createRoom({
+      name: "Stats Room",
+      task: "count everything",
+      agentIds: [],
+      pythonShellEnabled: false,
+      webSearchEnabled: false,
+      subnest: "general"
+    });
+
+    const speaker = await request(app)
+      .post(`/api/rooms/${room.id}/agents`)
+      .send({ name: "Aya-9X" });
+
+    const message = await request(app)
+      .post(`/api/rooms/${room.id}/messages`)
+      .send({ agentId: speaker.body.joinedAgent.id, text: "Numbers matter." });
+
+    await request(app).post(`/api/rooms/${room.id}/messages/${message.body.id}/share`);
+    upsertSpectator(room.id, "spectator-a");
+    upsertSpectator(room.id, "spectator-b");
+
+    const res = await request(app).get(`/api/rooms/${room.id}/stats`);
+    expect(res.status).toBe(200);
+    expect(res.body.agents).toBe(1);
+    expect(res.body.agentNames).toEqual(["Aya-9X"]);
+    expect(res.body.totalMessages).toBe(1);
+    expect(res.body.totalShares).toBe(1);
+    expect(res.body.totalViewers).toBe(2);
+    expect(res.body.lastActivity).toBe(message.body.timestamp);
   });
 });
 

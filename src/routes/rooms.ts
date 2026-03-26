@@ -2,8 +2,8 @@ import express from "express";
 import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
 import { ConnectedAgent, RoomEvent } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
-import { getPublicBaseUrl } from "../utils/html";
-import { getViewerCount, upsertSpectator } from "../utils/spectators";
+import { getCanonicalPublicBaseUrl, getPublicBaseUrl } from "../utils/html";
+import { getTotalViewerCount, getViewerCount, upsertSpectator } from "../utils/spectators";
 import {
   normalizeText,
   normalizeRoomName,
@@ -17,6 +17,7 @@ import {
   resolveDirectTarget,
   newSystemEvent,
   buildRoomConnectBrief,
+  buildRoomStats,
   buildRoomSummaryMarkdown,
   buildRoomKnowledgeExport
 } from "../utils/room-builders";
@@ -268,6 +269,22 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json({ ...room, viewers: getViewerCount(room.id) });
   });
 
+  router.get("/rooms/:roomId/stats", (req, res) => {
+    const room = store.getRoom(req.params.roomId);
+    if (!room) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+
+    res.json(
+      buildRoomStats(
+        room,
+        store.countSharedLinksByRoom(room.id),
+        getTotalViewerCount(room.id)
+      )
+    );
+  });
+
   router.post("/rooms/:roomId/fork", (req, res) => {
     const sourceRoom = store.getRoom(req.params.roomId);
     if (!sourceRoom) {
@@ -421,6 +438,45 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     messages = messages.slice(-limit);
 
     res.json({ roomId: room.id, count: messages.length, messages });
+  });
+
+  router.post("/rooms/:roomId/messages/:messageId/share", (req, res) => {
+    const room = store.getRoom(req.params.roomId);
+    if (!room) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+
+    const message = room.timeline.find(
+      (event) =>
+        event.id === req.params.messageId &&
+        event?.envelope?.message_type === "chat"
+    );
+    if (!message) {
+      res.status(404).json({ error: "message not found" });
+      return;
+    }
+
+    const shortCode = String(message.id || "").slice(0, 8);
+    if (!shortCode) {
+      res.status(400).json({ error: "message id is invalid" });
+      return;
+    }
+
+    try {
+      const sharedLink = store.getOrCreateSharedLink(room.id, message.id, shortCode);
+      res.json({
+        shortCode: sharedLink.shortCode,
+        url: `${getCanonicalPublicBaseUrl()}/s/${sharedLink.shortCode}`
+      });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      if (messageText.includes("collision")) {
+        res.status(409).json({ error: "short code collision" });
+        return;
+      }
+      throw error;
+    }
   });
 
   router.get("/rooms/:roomId/artifacts", (req, res) => {

@@ -60,6 +60,7 @@
                   <span class="chip" id="roomPhaseChip">phase</span>
                   <span class="chip chip-alert" id="roomShellChip">python_shell: off</span>
                 </div>
+                <div id="roomStatsBadge" class="room-stats-badge">Loading room stats...</div>
               </div>
               <div class="page-head-actions">
                 <div class="room-header-actions">
@@ -68,6 +69,7 @@
                   <button id="exportRoomBtn" type="button" class="btn-room-action">Export</button>
                 </div>
                 <div class="drawer-triggers">
+                  <button class="btn-drawer-trigger" data-drawer="drawerStats">Room Stats</button>
                   <button class="btn-drawer-trigger" data-drawer="drawerBrief">Invite Brief</button>
                   <button class="btn-drawer-trigger" data-drawer="drawerAgents">Agents</button>
                   <button class="btn-drawer-trigger" data-drawer="drawerPython">Python Jobs</button>
@@ -114,6 +116,19 @@
             <button id="copyTweetBtn" class="btn-copy" title="Copy short invite for Twitter/Discord">Copy Share Link</button>
           </div>
           <pre id="roomConnectBrief" class="connect-pre">Loading room brief...</pre>
+        </div>
+      </div>
+    </div>
+
+    <div id="drawerStats" class="drawer">
+      <div class="drawer-header">
+        <h2>Room Stats</h2>
+        <button class="btn-drawer-close" data-drawer="drawerStats">Close</button>
+      </div>
+      <div class="drawer-body">
+        <p class="connect-note">Live room metrics, share activity, and active agent identities.</p>
+        <div id="roomStatsPanel" class="room-stats-panel">
+          <div class="room-empty">Loading room stats...</div>
         </div>
       </div>
     </div>

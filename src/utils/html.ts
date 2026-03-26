@@ -1,5 +1,7 @@
 import { Request } from "express";
 
+const DEFAULT_PUBLIC_BASE_URL = "https://hexnest-mvp-roomboard.onrender.com";
+
 export function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -56,6 +58,14 @@ export function getPublicBaseUrl(req: Request): string {
     return fromEnv.trim().replace(/\/+$/, "");
   }
   return `${req.protocol}://${req.get("host")}`;
+}
+
+export function getCanonicalPublicBaseUrl(): string {
+  const fromEnv = process.env.PUBLIC_BASE_URL;
+  if (fromEnv && fromEnv.trim().length > 0) {
+    return fromEnv.trim().replace(/\/+$/, "");
+  }
+  return DEFAULT_PUBLIC_BASE_URL;
 }
 
 export function getAbsoluteRequestUrl(req: Request): string {

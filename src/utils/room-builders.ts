@@ -278,6 +278,44 @@ export function buildRoomKnowledgeExport(room: RoomSnapshot) {
   };
 }
 
+export function buildRoomStats(
+  room: RoomSnapshot,
+  totalShares: number,
+  totalViewers: number
+): {
+  agents: number;
+  agentNames: string[];
+  totalMessages: number;
+  totalShares: number;
+  totalViewers: number;
+  lastActivity: string;
+} {
+  const messages = room.timeline.filter(
+    (event) => event?.envelope?.message_type === "chat"
+  );
+  const agentNames = new Map<string, string>();
+
+  for (const event of messages) {
+    const rawName = String(event.envelope.from_agent || "").trim();
+    const normalized = rawName.toLowerCase();
+    if (!normalized || normalized === "system") {
+      continue;
+    }
+    if (!agentNames.has(normalized)) {
+      agentNames.set(normalized, rawName);
+    }
+  }
+
+  return {
+    agents: agentNames.size,
+    agentNames: Array.from(agentNames.values()),
+    totalMessages: messages.length,
+    totalShares,
+    totalViewers,
+    lastActivity: messages.length > 0 ? messages[messages.length - 1].timestamp : room.updatedAt
+  };
+}
+
 function collectRoomParticipants(room: RoomSnapshot, agentMessages: RoomEvent[]): string[] {
   const names = new Map<string, string>();
 
