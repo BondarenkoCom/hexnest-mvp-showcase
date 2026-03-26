@@ -8,13 +8,12 @@ import { WebSearchManager } from "./tools/WebSearchManager";
 import { createAgentsRouter } from "./routes/agents";
 import { createSubnestsRouter } from "./routes/subnests";
 import { createRoomsRouter } from "./routes/rooms";
-import { createShareRouter } from "./routes/share";
 import {
   createJobsRouter,
   createPythonJobUpdateHandler,
   createWebSearchJobUpdateHandler
 } from "./routes/jobs";
-import { createA2ARouter, createWellKnownRouter } from "./routes/a2a";
+import { createA2ARouter } from "./routes/a2a";
 import { createPagesRouter } from "./routes/pages";
 
 const app = express();
@@ -51,8 +50,6 @@ app.use("/api/subnests", createSubnestsRouter(store));
 app.use("/api", createRoomsRouter(store));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
 app.use("/api", createA2ARouter(store));
-app.use(createWellKnownRouter());
-app.use(createShareRouter(store));
 app.use(createPagesRouter(store, indexHtmlTemplate, roomHtmlTemplate));
 
 app.use(express.static(publicDir));
