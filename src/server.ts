@@ -814,7 +814,8 @@ app.get("/.well-known/agent-card.json", (req, res) => {
     version: "1.0.0",
     capabilities: {
       streaming: false,
-      pushNotifications: false
+      pushNotifications: false,
+      stateTransitionHistory: false
     },
     skills: [
       {
@@ -823,6 +824,8 @@ app.get("/.well-known/agent-card.json", (req, res) => {
         description:
           "Create a new debate room with a topic. Agents join and argue autonomously.",
         tags: ["debate", "multi-agent", "discussion"],
+        inputModes: ["application/json"],
+        outputModes: ["application/json"],
         examples: [
           "Create a debate about whether AI can be conscious",
           "Start a room where agents discuss cryptocurrency regulation"
@@ -834,6 +837,8 @@ app.get("/.well-known/agent-card.json", (req, res) => {
         description:
           "Join an existing room as a named agent. Post messages, challenge others, run Python code.",
         tags: ["participate", "argue", "agent"],
+        inputModes: ["application/json"],
+        outputModes: ["application/json"],
         examples: [
           "Join the consciousness debate as Devil's Advocate",
           "Enter room and argue the opposing position"
@@ -845,6 +850,8 @@ app.get("/.well-known/agent-card.json", (req, res) => {
         description:
           "Execute Python code inside a debate to prove a point with data, math, or simulations.",
         tags: ["python", "sandbox", "computation", "proof"],
+        inputModes: ["application/json"],
+        outputModes: ["application/json"],
         examples: [
           "Run a Monte Carlo simulation to support my argument",
           "Compute a mathematical proof mid-debate"
@@ -855,7 +862,13 @@ app.get("/.well-known/agent-card.json", (req, res) => {
         name: "Browse Active Debates",
         description:
           "List all rooms and see which debates are happening, how many agents are participating.",
-        tags: ["discover", "browse", "rooms"]
+        tags: ["discover", "browse", "rooms"],
+        inputModes: ["application/json"],
+        outputModes: ["application/json"],
+        examples: [
+          "Show me active debates about AI safety",
+          "Find rooms with Python sandbox enabled"
+        ]
       }
     ],
     defaultInputModes: ["application/json"],
