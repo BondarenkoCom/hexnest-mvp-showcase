@@ -1,0 +1,246 @@
+import express from "express";
+import { describe, it, expect, beforeEach } from "vitest";
+import request from "supertest";
+import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { createRoomsRouter } from "../routes/rooms";
+import { tempDbPath } from "./helpers";
+
+function buildApp(store: SQLiteRoomStore): express.Application {
+  const app = express();
+  app.use(express.json());
+  app.use("/api", createRoomsRouter(store));
+  return app;
+}
+
+describe("GET /api/health", () => {
+  it("returns ok: true", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const res = await request(buildApp(store)).get("/api/health");
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.service).toBe("hexnest-mvp");
+  });
+});
+
+describe("GET /api/stats", () => {
+  it("returns zero counts for empty store", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const res = await request(buildApp(store)).get("/api/stats");
+    expect(res.status).toBe(200);
+    expect(res.body.totalRooms).toBe(0);
+    expect(res.body.totalMessages).toBe(0);
+    expect(typeof res.body.totalAgents).toBe("number");
+  });
+});
+
+describe("POST /api/rooms", () => {
+  let store: SQLiteRoomStore;
+  let app: express.Application;
+
+  beforeEach(() => {
+    store = new SQLiteRoomStore(tempDbPath());
+    app = buildApp(store);
+  });
+
+  it("returns 400 when task is missing", async () => {
+    const res = await request(app).post("/api/rooms").send({ name: "Test" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/task/i);
+  });
+
+  it("returns 400 for unknown subnest", async () => {
+    const res = await request(app)
+      .post("/api/rooms")
+      .send({ task: "debate", subnest: "not-a-real-subnest" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/subnest/i);
+  });
+
+  it("creates room with valid payload and returns 201", async () => {
+    const res = await request(app).post("/api/rooms").send({
+      name: "My Room",
+      task: "Debate AI",
+      subnest: "ai",
+      pythonShellEnabled: true,
+      webSearchEnabled: false,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+    expect(res.body.name).toBe("My Room");
+    expect(res.body.task).toBe("Debate AI");
+    expect(res.body.subnest).toBe("ai");
+  });
+
+  it("auto-generates a room name when name is omitted", async () => {
+    const res = await request(app).post("/api/rooms").send({ task: "Some task" });
+    expect(res.status).toBe(201);
+    expect(res.body.name).toMatch(/^Room-/);
+  });
+});
+
+describe("GET /api/rooms", () => {
+  it("returns value array", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const res = await request(buildApp(store)).get("/api/rooms");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.value)).toBe(true);
+  });
+
+  it("lists created rooms", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    store.createRoom({ name: "R1", task: "t1", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    store.createRoom({ name: "R2", task: "t2", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const res = await request(buildApp(store)).get("/api/rooms");
+    expect(res.body.value).toHaveLength(2);
+  });
+});
+
+describe("GET /api/rooms/:roomId", () => {
+  it("returns 404 for unknown room", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const res = await request(buildApp(store)).get("/api/rooms/room-does-not-exist");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("room not found");
+  });
+
+  it("returns room for known id", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const room = store.createRoom({ name: "Visible", task: "task", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const res = await request(buildApp(store)).get(`/api/rooms/${room.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(room.id);
+  });
+});
+
+describe("POST /api/rooms/:roomId/agents", () => {
+  let store: SQLiteRoomStore;
+  let app: express.Application;
+  let roomId: string;
+
+  beforeEach(() => {
+    store = new SQLiteRoomStore(tempDbPath());
+    app = buildApp(store);
+    const room = store.createRoom({ name: "R", task: "t", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    roomId = room.id;
+  });
+
+  it("returns 404 for unknown room", async () => {
+    const res = await request(app).post("/api/rooms/no-room/agents").send({ name: "Bot" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when agent name is missing", async () => {
+    const res = await request(app).post(`/api/rooms/${roomId}/agents`).send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/name/i);
+  });
+
+  it("joins agent and returns 201", async () => {
+    const res = await request(app).post(`/api/rooms/${roomId}/agents`).send({ name: "AgentX" });
+    expect(res.status).toBe(201);
+    expect(res.body.joinedAgent.name).toBe("AgentX");
+    expect(res.body.roomId).toBe(roomId);
+  });
+
+  it("returns ok:true with alreadyJoined when agent joins twice", async () => {
+    await request(app).post(`/api/rooms/${roomId}/agents`).send({ name: "AgentX" });
+    const res = await request(app).post(`/api/rooms/${roomId}/agents`).send({ name: "AgentX" });
+    expect(res.status).toBe(200);
+    expect(res.body.alreadyJoined).toBe(true);
+  });
+});
+
+describe("POST /api/rooms/:roomId/messages", () => {
+  let store: SQLiteRoomStore;
+  let app: express.Application;
+  let roomId: string;
+  let agentId: string;
+
+  beforeEach(async () => {
+    store = new SQLiteRoomStore(tempDbPath());
+    app = buildApp(store);
+    const room = store.createRoom({ name: "R", task: "t", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    roomId = room.id;
+
+    const agentRes = await request(app)
+      .post(`/api/rooms/${roomId}/agents`)
+      .send({ name: "Speaker" });
+    agentId = agentRes.body.joinedAgent.id;
+  });
+
+  it("returns 404 for unknown room", async () => {
+    const res = await request(app)
+      .post("/api/rooms/no-room/messages")
+      .send({ agentId, text: "hello" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when text is missing", async () => {
+    const res = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/text/i);
+  });
+
+  it("returns 400 when agentId and agentName are both missing", async () => {
+    const res = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ text: "hello" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/agentId/i);
+  });
+
+  it("returns 403 when agent is not in the room", async () => {
+    const res = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId: "wrong-id", text: "hello" });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/agent not found/i);
+  });
+
+  it("posts message and returns 201 with event", async () => {
+    const res = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId, text: "Hello world!" });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+    expect(res.body.envelope.explanation).toBe("Hello world!");
+    expect(res.body.envelope.from_agent).toBe("Speaker");
+  });
+
+  it("message appears in GET /api/rooms/:id/messages", async () => {
+    await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId, text: "Test message" });
+
+    const res = await request(app).get(`/api/rooms/${roomId}/messages`);
+    expect(res.status).toBe(200);
+    const texts = res.body.messages.map((m: { text: string }) => m.text);
+    expect(texts).toContain("Test message");
+  });
+});
+
+describe("GET /api/discover", () => {
+  it("returns count and rooms array", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const app = buildApp(store);
+    const res = await request(app).get("/api/discover");
+    expect(res.status).toBe(200);
+    expect(typeof res.body.count).toBe("number");
+    expect(Array.isArray(res.body.rooms)).toBe(true);
+  });
+
+  it("filters by query string q", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    store.createRoom({ name: "Blockchain debate", task: "pros and cons of blockchain", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    store.createRoom({ name: "Other room", task: "something else entirely", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const app = buildApp(store);
+
+    const res = await request(app).get("/api/discover?q=blockchain");
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBeGreaterThanOrEqual(1);
+    const names = res.body.rooms.map((r: { name: string }) => r.name);
+    expect(names).toContain("Blockchain debate");
+  });
+});
