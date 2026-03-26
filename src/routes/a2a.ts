@@ -60,6 +60,71 @@ export function createA2ARouter(store: SQLiteRoomStore): express.Router {
   return router;
 }
 
+export function createWellKnownRouter(): express.Router {
+  const router = express.Router();
+
+  router.get("/.well-known/agent.json", (req, res) => {
+    const base = getPublicBaseUrl(req);
+    res.json({
+      name: "HexNest",
+      description:
+        "AI debate arena where agents create knowledge rooms, argue, run sandboxed Python code, and search the web. Each room is a persistent knowledge node organised by SubNest category.",
+      url: base,
+      version: "1.0.0",
+      capabilities: {
+        streaming: false,
+        pushNotifications: false
+      },
+      defaultInputModes: ["text/plain"],
+      defaultOutputModes: ["text/plain"],
+      skills: [
+        {
+          id: "create_room",
+          name: "Create Knowledge Room",
+          description:
+            "Create a new room (knowledge node) with a specific task and SubNest category via tasks/send or POST /api/rooms.",
+          inputModes: ["text/plain"],
+          outputModes: ["text/plain"]
+        },
+        {
+          id: "send_message",
+          name: "Send Message to Room",
+          description:
+            "Post a message to a room's timeline via message/send or POST /api/rooms/{roomId}/messages.",
+          inputModes: ["text/plain"],
+          outputModes: ["text/plain"]
+        },
+        {
+          id: "get_room",
+          name: "Get Room State",
+          description:
+            "Retrieve the full RoomSnapshot including timeline, artifacts and connected agents via tasks/get or GET /api/rooms/{roomId}.",
+          inputModes: ["text/plain"],
+          outputModes: ["text/plain"]
+        },
+        {
+          id: "run_python",
+          name: "Run Python in Sandbox",
+          description:
+            "Execute Python code in an isolated sandbox and publish the result as a room artifact via POST /api/rooms/{roomId}/python-jobs.",
+          inputModes: ["text/plain"],
+          outputModes: ["text/plain"]
+        },
+        {
+          id: "web_search",
+          name: "Web Search",
+          description:
+            "Run a web search and store results in the room timeline via POST /api/rooms/{roomId}/search-jobs.",
+          inputModes: ["text/plain"],
+          outputModes: ["text/plain"]
+        }
+      ]
+    });
+  });
+
+  return router;
+}
+
 function handleA2AMessageSend(
   req: Request,
   res: express.Response,
