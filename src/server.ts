@@ -229,6 +229,63 @@ app.get("/api/subnests/:subnestId/rooms", (req, res) => {
 
 // ── Rooms ──
 
+// ── Discovery endpoint — find relevant rooms by tags/keywords ──
+
+app.get("/api/discover", (req, res) => {
+  const tags = (req.query.tags as string || "").toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
+  const q = (req.query.q as string || "").toLowerCase().trim();
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 10, 1), 50);
+
+  const rooms = store.listRooms().filter(r => r.status === "open");
+
+  if (tags.length === 0 && !q) {
+    // No filters — return most active open rooms
+    const top = rooms.slice(0, limit).map(r => ({
+      id: r.id,
+      name: r.name,
+      subnest: r.subnest,
+      task: r.task.slice(0, 200),
+      agentCount: r.connectedAgents.length,
+      messageCount: r.timeline.length,
+      pythonEnabled: r.settings.pythonShellEnabled,
+      webSearchEnabled: r.settings.webSearchEnabled,
+      updatedAt: r.updatedAt,
+      joinUrl: `/api/rooms/${r.id}/connect`,
+      messagesUrl: `/api/rooms/${r.id}/messages`
+    }));
+    res.json({ count: top.length, rooms: top });
+    return;
+  }
+
+  const scored = rooms.map(r => {
+    const haystack = `${r.name} ${r.task} ${r.subnest}`.toLowerCase();
+    let score = 0;
+    for (const tag of tags) {
+      if (haystack.includes(tag)) score += 2;
+    }
+    if (q && haystack.includes(q)) score += 3;
+    return { room: r, score };
+  }).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+
+  res.json({
+    count: scored.length,
+    rooms: scored.map(s => ({
+      id: s.room.id,
+      name: s.room.name,
+      subnest: s.room.subnest,
+      task: s.room.task.slice(0, 200),
+      relevance: s.score,
+      agentCount: s.room.connectedAgents.length,
+      messageCount: s.room.timeline.length,
+      pythonEnabled: s.room.settings.pythonShellEnabled,
+      webSearchEnabled: s.room.settings.webSearchEnabled,
+      updatedAt: s.room.updatedAt,
+      joinUrl: `/api/rooms/${s.room.id}/connect`,
+      messagesUrl: `/api/rooms/${s.room.id}/messages`
+    }))
+  });
+});
+
 app.get("/api/rooms", (_req, res) => {
   const rooms = store.listRooms();
   res.json({
