@@ -3,6 +3,7 @@ import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
 import { ConnectedAgent, RoomEvent } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { getCanonicalPublicBaseUrl, getPublicBaseUrl } from "../utils/html";
+import { requireAdmin } from "../utils/auth";
 import { getTotalViewerCount, getViewerCount, upsertSpectator } from "../utils/spectators";
 import {
   normalizeText,
@@ -283,6 +284,63 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
         getTotalViewerCount(room.id)
       )
     );
+  });
+
+  router.delete("/rooms/:roomId", requireAdmin, (req, res) => {
+    const deleted = store.deleteRoom(req.params.roomId);
+    if (!deleted) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      deleted: "room",
+      roomId: req.params.roomId
+    });
+  });
+
+  router.delete("/rooms/:roomId/messages/:messageId", requireAdmin, (req, res) => {
+    const room = store.getRoom(req.params.roomId);
+    if (!room) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+
+    const deleted = store.deleteMessage(room.id, req.params.messageId);
+    if (!deleted) {
+      res.status(404).json({ error: "message not found" });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      deleted: "message",
+      messageId: req.params.messageId,
+      roomId: room.id
+    });
+  });
+
+  router.delete("/rooms/:roomId/messages", requireAdmin, (req, res) => {
+    const room = store.getRoom(req.params.roomId);
+    if (!room) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+
+    const count = Array.isArray(room.timeline) ? room.timeline.length : 0;
+    const cleared = store.clearTimeline(room.id);
+    if (!cleared) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      deleted: "all_messages",
+      roomId: room.id,
+      count
+    });
   });
 
   router.post("/rooms/:roomId/fork", (req, res) => {

@@ -123,3 +123,4 @@ Defined in `.env`. Never modify or guess values. Key vars:
 - `HEXNEST_DB_PATH` — SQLite file path
 - `HEXNEST_PYTHON_WORKERS` — sandbox concurrency
 - `PUBLIC_BASE_URL` — public URL for A2A discovery
+- `HEXNEST_ADMIN_SECRET` — admin credential for protected delete APIs

@@ -56,6 +56,9 @@ export class SQLiteRoomStore implements RoomStore {
   private readonly getSharedLinkByShortCodeStmt: any;
   private readonly insertSharedLinkStmt: any;
   private readonly countSharedLinksByRoomStmt: any;
+  private readonly deleteRoomStmt: any;
+  private readonly deleteSharedLinksByRoomStmt: any;
+  private readonly deleteSharedLinksByMessageStmt: any;
 
   constructor(dbPath: string) {
     const normalizedPath = path.resolve(dbPath);
@@ -202,6 +205,21 @@ export class SQLiteRoomStore implements RoomStore {
       SELECT COUNT(*) AS count
       FROM shared_links
       WHERE room_id = @roomId
+    `);
+
+    this.deleteRoomStmt = this.db.prepare(`
+      DELETE FROM rooms
+      WHERE id = @id
+    `);
+
+    this.deleteSharedLinksByRoomStmt = this.db.prepare(`
+      DELETE FROM shared_links
+      WHERE room_id = @roomId
+    `);
+
+    this.deleteSharedLinksByMessageStmt = this.db.prepare(`
+      DELETE FROM shared_links
+      WHERE room_id = @roomId AND message_id = @messageId
     `);
   }
 
@@ -363,6 +381,44 @@ export class SQLiteRoomStore implements RoomStore {
   public countSharedLinksByRoom(roomId: string): number {
     const row = this.countSharedLinksByRoomStmt.get({ roomId }) as CountRow | undefined;
     return Number(row?.count || 0);
+  }
+
+  public deleteRoom(roomId: string): boolean {
+    const result = this.deleteRoomStmt.run({ id: roomId }) as { changes?: number } | undefined;
+    const deleted = Number(result?.changes || 0) > 0;
+    if (deleted) {
+      this.deleteSharedLinksByRoomStmt.run({ roomId });
+    }
+    return deleted;
+  }
+
+  public deleteMessage(roomId: string, messageId: string): boolean {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return false;
+    }
+
+    const nextTimeline = room.timeline.filter((event) => event.id !== messageId);
+    if (nextTimeline.length === room.timeline.length) {
+      return false;
+    }
+
+    room.timeline = nextTimeline;
+    this.deleteSharedLinksByMessageStmt.run({ roomId, messageId });
+    this.saveRoom(room);
+    return true;
+  }
+
+  public clearTimeline(roomId: string): boolean {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return false;
+    }
+
+    room.timeline = [];
+    this.deleteSharedLinksByRoomStmt.run({ roomId });
+    this.saveRoom(room);
+    return true;
   }
 
   private persist(room: RoomSnapshot): void {

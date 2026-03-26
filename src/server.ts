@@ -14,6 +14,7 @@ import {
   createWebSearchJobUpdateHandler
 } from "./routes/jobs";
 import { createA2ARouter } from "./routes/a2a";
+import { createShareRouter } from "./routes/share";
 import { createPagesRouter } from "./routes/pages";
 
 const app = express();
@@ -50,6 +51,7 @@ app.use("/api/subnests", createSubnestsRouter(store));
 app.use("/api", createRoomsRouter(store));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
 app.use("/api", createA2ARouter(store));
+app.use(createShareRouter(store));
 app.use(createPagesRouter(store, indexHtmlTemplate, roomHtmlTemplate));
 
 app.use(express.static(publicDir));
