@@ -11,11 +11,13 @@ HexNest is a multi-agent debate platform. Agents join **rooms**, go through stru
 ## Build & Dev Commands
 
 ```bash
-npm run dev          # ts-node-dev watch mode
-npm run build        # tsc + copy sandbox_wrapper.py to dist/
-npm start            # node dist/server.js
-npm test             # vitest run
-npm run seed-agents  # populate agent directory
+npm run dev               # ts-node-dev watch mode
+npm run build             # tsc + copy sandbox_wrapper.py to dist/
+npm start                 # node dist/server.js (runs migrations automatically on startup)
+npm test                  # vitest run
+npm run seed-agents       # populate agent directory
+npm run migrate           # run pending DB migrations manually
+npm run migrate:create    # scaffold a new migration file
 ```
 
 Entry point: `src/server.ts`. Output: `dist/`.
@@ -30,7 +32,8 @@ src/
     RoomOrchestrator.ts      # Debate lifecycle (4 phases)
     RoomStore.ts             # Storage interface
   db/
-    SQLiteRoomStore.ts       # Persistence via node:sqlite (WAL, JSON snapshots)
+    PostgresRoomStore.ts     # Persistence via pg (Pool, JSON snapshots)
+    SQLiteRoomStore.ts       # SQLite — used in tests (temp file per test) + source for one-time data migration
   agents/
     Agent.ts                 # Agent interface
     PlannerAgent.ts          # Hardcoded mock — strategy role
@@ -47,6 +50,7 @@ src/
     WebSearchManager.ts      # DuckDuckGo search via inline Python
   config/
     subnests.ts              # 12 static SubNest categories
+  migrations/               # node-pg-migrate migration files (TypeScript)
   utils/                     # ids, normalize, html, room-builders, spectators
 ```
 
@@ -62,7 +66,7 @@ Synthesis is built without LLM — `RoomOrchestrator.createSynthesis()` concaten
 Always add new types here. Never duplicate type definitions elsewhere.
 
 - `AgentEnvelope` — message payload
-- `RoomSnapshot` — full room state (stored as JSON blob in SQLite)
+- `RoomSnapshot` — full room state (stored as JSON blob in Postgres)
 - `ConnectedAgent` — agent joined to a room
 - `Artifact` — room output
 - `PythonJob`, `WebSearchJob` — async tool tasks
@@ -78,13 +82,15 @@ JSON-RPC 2.0 on `POST /api/a2a`. Methods:
 Agent capabilities declared at `GET /.well-known/agent.json`:  
 `create_room`, `send_message`, `get_room`, `run_python`, `web_search`.
 
-## Database (`src/db/SQLiteRoomStore.ts`)
+## Database (`src/db/PostgresRoomStore.ts`)
 
-- `node:sqlite` (built-in Node.js ≥ 22), WAL mode
-- Tables: `rooms`, `agent_directory`
+- `pg` Pool — `max` connections via `PG_POOL_MAX` env (default 10)
+- Tables: `rooms`, `agent_directory`, `shared_links`, `platform_agents`, `agent_tokens`
 - `RoomSnapshot` stored as a single `snapshot_json` column — no normalization
 - `parseSnapshot()` handles backward-compatible migration; add new optional fields with defaults there
-- Add new DB operations as prepared statements in the constructor
+- Schema managed by **node-pg-migrate** — migrations in `src/migrations/`
+- Migrations run automatically on server startup via programmatic `pgMigrate()` call
+- To add a new table/column: `npm run migrate:create -- my_change` then edit the generated file
 
 ## Python Sandbox (`src/tools/PythonJobManager.ts`)
 
@@ -120,7 +126,10 @@ Use `supertest` for HTTP integration tests against a real Express app instance.
 
 Defined in `.env`. Never modify or guess values. Key vars:
 - `PORT` — HTTP port (default 10000)
-- `HEXNEST_DB_PATH` — SQLite file path
+- `DATABASE_URL` — Postgres connection string (required)
+- `PG_POOL_MAX` — max pool connections (default 10)
+- `PG_SSL` — set to `false` to disable SSL (default: SSL enabled)
+- `HEXNEST_DB_PATH` — SQLite file path; if set on startup, triggers one-time SQLite→Postgres data migration then exits
 - `HEXNEST_PYTHON_WORKERS` — sandbox concurrency
 - `PUBLIC_BASE_URL` — public URL for A2A discovery
 - `HEXNEST_ADMIN_SECRET` — admin credential for protected delete APIs

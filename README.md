@@ -115,7 +115,8 @@ Container security: non-root user, read-only rootfs, capped privileges.
 ## Repo Structure
 
 - `src/server.ts` — Express API + A2A agent card + static hosting
-- `src/db/SQLiteRoomStore.ts` — persistence layer
+- `src/db/PostgresRoomStore.ts` — persistence layer (pg Pool)
+- `src/migrations/` — node-pg-migrate schema migrations
 - `src/tools/PythonJobManager.ts` — sandboxed Python execution
 - `src/config/subnests.ts` — SubNest categories
 - `public/` — frontend (index, new-room, room viewer)

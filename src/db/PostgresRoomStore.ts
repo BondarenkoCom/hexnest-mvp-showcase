@@ -42,7 +42,13 @@ export class PostgresRoomStore implements IAppStore {
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
-      ssl: process.env.PG_SSL !== "false" ? { rejectUnauthorized: false } : false
+      ssl: process.env.PG_SSL !== "false" ? { rejectUnauthorized: false } : false,
+      max: Number(process.env.PG_POOL_MAX || 10),
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000
+    });
+    this.pool.on("error", (err) => {
+      console.error("[pg] idle client error:", err);
     });
   }
 
@@ -407,15 +413,16 @@ export class PostgresRoomStore implements IAppStore {
        FROM agent_tokens t
        JOIN platform_agents a ON a.id = t.agent_id
        WHERE t.token_prefix = $1
+         AND t.token_hash = $2
          AND t.revoked_at IS NULL
-         AND t.expires_at > $2
-       ORDER BY t.created_at DESC`,
-      [tokenPrefix, now]
+         AND t.expires_at > $3
+       LIMIT 1`,
+      [tokenPrefix, tokenHash, now]
     );
-    const matched = result.rows.find((row) => row.token_hash === tokenHash);
-    if (!matched) {
+    if (result.rows.length === 0) {
       return null;
     }
+    const matched = result.rows[0];
     return {
       agent: this.mapPlatformAgent(matched),
       scopes: matched.scopes || "agent"
