@@ -1,6 +1,13 @@
 import fs from "fs";
 import path from "path";
-import { DirectoryAgent, RoomSnapshot, SharedLink } from "../types/protocol";
+import { createHash, randomBytes } from "crypto";
+import {
+  DirectoryAgent,
+  PlatformAgent,
+  RegisterAgentInput,
+  RoomSnapshot,
+  SharedLink
+} from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
 
@@ -25,6 +32,9 @@ interface CountRow {
 }
 
 export class SQLiteRoomStore implements IAppStore {
+  private static readonly NODE_ID = "hexnest-main";
+  private static readonly TOKEN_PREFIX = "hxn_live_";
+  private static readonly TOKEN_PREFIX_LENGTH = 8;
   private readonly db: any;
   private readonly getRoomStmt: any;
   private readonly listRoomsStmt: any;
@@ -89,6 +99,45 @@ export class SQLiteRoomStore implements IAppStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_links_room_message
       ON shared_links(room_id, message_id);
       CREATE INDEX IF NOT EXISTS idx_shared_links_room_id ON shared_links(room_id);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS platform_agents (
+        id TEXT PRIMARY KEY,
+        nickname TEXT UNIQUE NOT NULL,
+        handle TEXT UNIQUE NOT NULL,
+        organization TEXT,
+        specialty TEXT NOT NULL DEFAULT '[]',
+        tags TEXT NOT NULL DEFAULT '[]',
+        theme TEXT DEFAULT 'dark',
+        model_family TEXT,
+        public_key TEXT,
+        verification_url TEXT,
+        home_url TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_platform_agents_nickname ON platform_agents(nickname);
+      CREATE INDEX IF NOT EXISTS idx_platform_agents_handle ON platform_agents(handle);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_tokens (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        token_prefix TEXT NOT NULL,
+        issuer_node_id TEXT NOT NULL DEFAULT 'hexnest-main',
+        version INTEGER NOT NULL DEFAULT 1,
+        scopes TEXT NOT NULL DEFAULT 'agent',
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        last_used_at TEXT,
+        FOREIGN KEY(agent_id) REFERENCES platform_agents(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_tokens_prefix ON agent_tokens(token_prefix);
+      CREATE INDEX IF NOT EXISTS idx_agent_tokens_agent_id ON agent_tokens(agent_id);
     `);
 
     // Migration: add category column if missing (existing DBs)
@@ -362,6 +411,172 @@ export class SQLiteRoomStore implements IAppStore {
     return Promise.resolve(Number(row?.count || 0));
   }
 
+  public async registerAgent(input: RegisterAgentInput): Promise<PlatformAgent> {
+    const nickname = String(input.nickname || "").trim();
+    const handle = `${nickname}@${SQLiteRoomStore.NODE_ID}`;
+    const now = nowIso();
+    const specialty = this.toStringArray(input.specialty);
+    const tags = this.toStringArray(input.tags);
+    const agent: PlatformAgent = {
+      id: newId(),
+      nickname,
+      handle,
+      organization: this.toOptionalText(input.organization) || undefined,
+      specialty,
+      tags,
+      theme: this.toOptionalText(input.theme) || "dark",
+      modelFamily: this.toOptionalText(input.modelFamily) || undefined,
+      publicKey: this.toOptionalText(input.publicKey) || undefined,
+      verificationUrl: this.toOptionalText(input.verificationUrl) || undefined,
+      homeUrl: this.toOptionalText(input.homeUrl) || undefined,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.db.prepare(`
+      INSERT INTO platform_agents (
+        id, nickname, handle, organization, specialty, tags, theme,
+        model_family, public_key, verification_url, home_url, created_at, updated_at
+      )
+      VALUES (
+        @id, @nickname, @handle, @organization, @specialty, @tags, @theme,
+        @modelFamily, @publicKey, @verificationUrl, @homeUrl, @createdAt, @updatedAt
+      )
+    `).run({
+      id: agent.id,
+      nickname: agent.nickname,
+      handle: agent.handle,
+      organization: agent.organization || null,
+      specialty: JSON.stringify(agent.specialty),
+      tags: JSON.stringify(agent.tags),
+      theme: agent.theme,
+      modelFamily: agent.modelFamily || null,
+      publicKey: agent.publicKey || null,
+      verificationUrl: agent.verificationUrl || null,
+      homeUrl: agent.homeUrl || null,
+      createdAt: agent.createdAt,
+      updatedAt: agent.updatedAt
+    });
+
+    return Promise.resolve(agent);
+  }
+
+  public async getAgentById(agentId: string): Promise<PlatformAgent | null> {
+    const row = this.db.prepare(`
+      SELECT
+        id, nickname, handle, organization, specialty, tags, theme,
+        model_family, public_key, verification_url, home_url, created_at, updated_at
+      FROM platform_agents
+      WHERE id = @id
+      LIMIT 1
+    `).get({ id: agentId }) as PlatformAgentSqlRow | undefined;
+    return Promise.resolve(row ? this.mapPlatformAgent(row) : null);
+  }
+
+  public async getAgentByNickname(nickname: string): Promise<PlatformAgent | null> {
+    const row = this.db.prepare(`
+      SELECT
+        id, nickname, handle, organization, specialty, tags, theme,
+        model_family, public_key, verification_url, home_url, created_at, updated_at
+      FROM platform_agents
+      WHERE LOWER(nickname) = LOWER(@nickname)
+      LIMIT 1
+    `).get({ nickname }) as PlatformAgentSqlRow | undefined;
+    return Promise.resolve(row ? this.mapPlatformAgent(row) : null);
+  }
+
+  public async getAgentByHandle(handle: string): Promise<PlatformAgent | null> {
+    const row = this.db.prepare(`
+      SELECT
+        id, nickname, handle, organization, specialty, tags, theme,
+        model_family, public_key, verification_url, home_url, created_at, updated_at
+      FROM platform_agents
+      WHERE LOWER(handle) = LOWER(@handle)
+      LIMIT 1
+    `).get({ handle }) as PlatformAgentSqlRow | undefined;
+    return Promise.resolve(row ? this.mapPlatformAgent(row) : null);
+  }
+
+  public async listPlatformAgents(): Promise<PlatformAgent[]> {
+    const rows = this.db.prepare(`
+      SELECT
+        id, nickname, handle, organization, specialty, tags, theme,
+        model_family, public_key, verification_url, home_url, created_at, updated_at
+      FROM platform_agents
+      ORDER BY created_at DESC
+    `).all() as PlatformAgentSqlRow[];
+    return Promise.resolve(rows.map((row) => this.mapPlatformAgent(row)));
+  }
+
+  public async createToken(agentId: string, scopes: string): Promise<{ token: string; expiresAt: string }> {
+    const token = `${SQLiteRoomStore.TOKEN_PREFIX}${randomBytes(16).toString("hex")}`;
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const tokenPrefix = this.tokenPrefixFromToken(token);
+    const createdAt = nowIso();
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    this.db.prepare(`
+      INSERT INTO agent_tokens (
+        id, agent_id, token_hash, token_prefix, issuer_node_id, version, scopes, created_at, expires_at
+      )
+      VALUES (
+        @id, @agentId, @tokenHash, @tokenPrefix, @issuerNodeId, @version, @scopes, @createdAt, @expiresAt
+      )
+    `).run({
+      id: newId(),
+      agentId,
+      tokenHash,
+      tokenPrefix,
+      issuerNodeId: SQLiteRoomStore.NODE_ID,
+      version: 1,
+      scopes: scopes || "agent",
+      createdAt,
+      expiresAt
+    });
+    return Promise.resolve({ token, expiresAt });
+  }
+
+  public async validateToken(token: string): Promise<{ agent: PlatformAgent; scopes: string } | null> {
+    const trimmed = String(token || "").trim();
+    if (!trimmed) {
+      return Promise.resolve(null);
+    }
+    const tokenHash = createHash("sha256").update(trimmed).digest("hex");
+    const tokenPrefix = this.tokenPrefixFromToken(trimmed);
+    const now = nowIso();
+    const rows = this.db.prepare(`
+      SELECT
+        t.token_hash, t.scopes, t.expires_at, t.revoked_at,
+        a.id, a.nickname, a.handle, a.organization, a.specialty, a.tags, a.theme,
+        a.model_family, a.public_key, a.verification_url, a.home_url, a.created_at, a.updated_at
+      FROM agent_tokens t
+      JOIN platform_agents a ON a.id = t.agent_id
+      WHERE t.token_prefix = @tokenPrefix
+        AND t.revoked_at IS NULL
+        AND t.expires_at > @now
+      ORDER BY t.created_at DESC
+    `).all({ tokenPrefix, now }) as TokenValidationSqlRow[];
+    const matched = rows.find((row) => row.token_hash === tokenHash);
+    if (!matched) {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({
+      agent: this.mapPlatformAgent(matched),
+      scopes: matched.scopes || "agent"
+    });
+  }
+
+  public async updateTokenLastUsed(tokenPrefix: string): Promise<void> {
+    this.db.prepare(`
+      UPDATE agent_tokens
+      SET last_used_at = @lastUsedAt
+      WHERE token_prefix = @tokenPrefix
+        AND revoked_at IS NULL
+    `).run({
+      tokenPrefix,
+      lastUsedAt: nowIso()
+    });
+  }
+
   public async deleteRoom(roomId: string): Promise<boolean> {
     const result = this.deleteRoomStmt.run({ id: roomId }) as { changes?: number } | undefined;
     const deleted = Number(result?.changes || 0) > 0;
@@ -458,6 +673,59 @@ export class SQLiteRoomStore implements IAppStore {
     return room;
   }
 
+  private mapPlatformAgent(row: PlatformAgentSqlRow | TokenValidationSqlRow): PlatformAgent {
+    return {
+      id: row.id,
+      nickname: row.nickname,
+      handle: row.handle,
+      organization: row.organization || undefined,
+      specialty: this.parseStringArray(row.specialty),
+      tags: this.parseStringArray(row.tags),
+      theme: row.theme || "dark",
+      modelFamily: row.model_family || undefined,
+      publicKey: row.public_key || undefined,
+      verificationUrl: row.verification_url || undefined,
+      homeUrl: row.home_url || undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  private parseStringArray(raw: string): string[] {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  private toOptionalText(value: string | undefined): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private toStringArray(value: string[] | undefined): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+
+  private tokenPrefixFromToken(token: string): string {
+    if (token.startsWith(SQLiteRoomStore.TOKEN_PREFIX)) {
+      return token.slice(
+        SQLiteRoomStore.TOKEN_PREFIX.length,
+        SQLiteRoomStore.TOKEN_PREFIX.length + SQLiteRoomStore.TOKEN_PREFIX_LENGTH
+      );
+    }
+    return token.slice(0, SQLiteRoomStore.TOKEN_PREFIX_LENGTH);
+  }
+
   private mapSharedLink(row: SharedLinkRow): SharedLink {
     return {
       id: row.id,
@@ -467,4 +735,27 @@ export class SQLiteRoomStore implements IAppStore {
       createdAt: row.created_at
     };
   }
+}
+
+interface PlatformAgentSqlRow {
+  id: string;
+  nickname: string;
+  handle: string;
+  organization: string | null;
+  specialty: string;
+  tags: string;
+  theme: string | null;
+  model_family: string | null;
+  public_key: string | null;
+  verification_url: string | null;
+  home_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TokenValidationSqlRow extends PlatformAgentSqlRow {
+  token_hash: string;
+  scopes: string;
+  expires_at: string;
+  revoked_at: string | null;
 }

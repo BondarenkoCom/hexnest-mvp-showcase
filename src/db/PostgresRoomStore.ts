@@ -1,10 +1,43 @@
-import { Pool, PoolClient } from "pg";
-import { DirectoryAgent, RoomSnapshot, SharedLink } from "../types/protocol";
+import { createHash, randomBytes } from "crypto";
+import { Pool } from "pg";
+import {
+  DirectoryAgent,
+  PlatformAgent,
+  RegisterAgentInput,
+  RoomSnapshot,
+  SharedLink
+} from "../types/protocol";
 import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
 import { newId, nowIso } from "../utils/ids";
 
 export class PostgresRoomStore implements IAppStore {
+  private static readonly NODE_ID = "hexnest-main";
+  private static readonly TOKEN_PREFIX_LENGTH = 8;
+  private static readonly TOKEN_PREFIX = "hxn_live_";
   private readonly pool: Pool;
+
+  private static toOptionalText(value: string | undefined): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private static toStringArray(value: string[] | undefined): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+
+  private static tokenPrefixFromToken(token: string): string {
+    if (token.startsWith(PostgresRoomStore.TOKEN_PREFIX)) {
+      return token.slice(
+        PostgresRoomStore.TOKEN_PREFIX.length,
+        PostgresRoomStore.TOKEN_PREFIX.length + PostgresRoomStore.TOKEN_PREFIX_LENGTH
+      );
+    }
+    return token.slice(0, PostgresRoomStore.TOKEN_PREFIX_LENGTH);
+  }
 
   constructor(connectionString: string) {
     this.pool = new Pool({
@@ -51,6 +84,40 @@ export class PostgresRoomStore implements IAppStore {
           UNIQUE(room_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_shared_links_room_id ON shared_links(room_id);
+
+        CREATE TABLE IF NOT EXISTS platform_agents (
+          id TEXT PRIMARY KEY,
+          nickname TEXT UNIQUE NOT NULL,
+          handle TEXT UNIQUE NOT NULL,
+          organization TEXT,
+          specialty TEXT NOT NULL DEFAULT '[]',
+          tags TEXT NOT NULL DEFAULT '[]',
+          theme TEXT DEFAULT 'dark',
+          model_family TEXT,
+          public_key TEXT,
+          verification_url TEXT,
+          home_url TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_platform_agents_nickname ON platform_agents(nickname);
+        CREATE INDEX IF NOT EXISTS idx_platform_agents_handle ON platform_agents(handle);
+
+        CREATE TABLE IF NOT EXISTS agent_tokens (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL REFERENCES platform_agents(id),
+          token_hash TEXT NOT NULL,
+          token_prefix TEXT NOT NULL,
+          issuer_node_id TEXT NOT NULL DEFAULT 'hexnest-main',
+          version INTEGER NOT NULL DEFAULT 1,
+          scopes TEXT NOT NULL DEFAULT 'agent',
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          revoked_at TEXT,
+          last_used_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_tokens_prefix ON agent_tokens(token_prefix);
+        CREATE INDEX IF NOT EXISTS idx_agent_tokens_agent_id ON agent_tokens(agent_id);
       `);
     } finally {
       client.release();
@@ -265,6 +332,175 @@ export class PostgresRoomStore implements IAppStore {
     return Number(result.rows[0]?.count ?? 0);
   }
 
+  async registerAgent(input: RegisterAgentInput): Promise<PlatformAgent> {
+    const nickname = String(input.nickname || "").trim();
+    const now = nowIso();
+    const handle = `${nickname}@${PostgresRoomStore.NODE_ID}`;
+    const specialty = PostgresRoomStore.toStringArray(input.specialty);
+    const tags = PostgresRoomStore.toStringArray(input.tags);
+
+    const agent: PlatformAgent = {
+      id: newId(),
+      nickname,
+      handle,
+      organization: PostgresRoomStore.toOptionalText(input.organization) || undefined,
+      specialty,
+      tags,
+      theme: PostgresRoomStore.toOptionalText(input.theme) || "dark",
+      modelFamily: PostgresRoomStore.toOptionalText(input.modelFamily) || undefined,
+      publicKey: PostgresRoomStore.toOptionalText(input.publicKey) || undefined,
+      verificationUrl: PostgresRoomStore.toOptionalText(input.verificationUrl) || undefined,
+      homeUrl: PostgresRoomStore.toOptionalText(input.homeUrl) || undefined,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await this.pool.query(
+      `INSERT INTO platform_agents (
+         id, nickname, handle, organization, specialty, tags, theme,
+         model_family, public_key, verification_url, home_url, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [
+        agent.id,
+        agent.nickname,
+        agent.handle,
+        agent.organization || null,
+        JSON.stringify(agent.specialty),
+        JSON.stringify(agent.tags),
+        agent.theme,
+        agent.modelFamily || null,
+        agent.publicKey || null,
+        agent.verificationUrl || null,
+        agent.homeUrl || null,
+        agent.createdAt,
+        agent.updatedAt
+      ]
+    );
+
+    return agent;
+  }
+
+  async getAgentById(agentId: string): Promise<PlatformAgent | null> {
+    const result = await this.pool.query<PlatformAgentRow>(
+      `SELECT
+         id, nickname, handle, organization, specialty, tags, theme,
+         model_family, public_key, verification_url, home_url, created_at, updated_at
+       FROM platform_agents
+       WHERE id = $1
+       LIMIT 1`,
+      [agentId]
+    );
+    if (result.rows.length === 0) return null;
+    return this.mapPlatformAgent(result.rows[0]);
+  }
+
+  async getAgentByNickname(nickname: string): Promise<PlatformAgent | null> {
+    const result = await this.pool.query<PlatformAgentRow>(
+      `SELECT
+         id, nickname, handle, organization, specialty, tags, theme,
+         model_family, public_key, verification_url, home_url, created_at, updated_at
+       FROM platform_agents
+       WHERE LOWER(nickname) = LOWER($1)
+       LIMIT 1`,
+      [nickname]
+    );
+    if (result.rows.length === 0) return null;
+    return this.mapPlatformAgent(result.rows[0]);
+  }
+
+  async getAgentByHandle(handle: string): Promise<PlatformAgent | null> {
+    const result = await this.pool.query<PlatformAgentRow>(
+      `SELECT
+         id, nickname, handle, organization, specialty, tags, theme,
+         model_family, public_key, verification_url, home_url, created_at, updated_at
+       FROM platform_agents
+       WHERE LOWER(handle) = LOWER($1)
+       LIMIT 1`,
+      [handle]
+    );
+    if (result.rows.length === 0) return null;
+    return this.mapPlatformAgent(result.rows[0]);
+  }
+
+  async listPlatformAgents(): Promise<PlatformAgent[]> {
+    const result = await this.pool.query<PlatformAgentRow>(
+      `SELECT
+         id, nickname, handle, organization, specialty, tags, theme,
+         model_family, public_key, verification_url, home_url, created_at, updated_at
+       FROM platform_agents
+       ORDER BY created_at DESC`
+    );
+    return result.rows.map((row) => this.mapPlatformAgent(row));
+  }
+
+  async createToken(agentId: string, scopes: string): Promise<{ token: string; expiresAt: string }> {
+    const token = `${PostgresRoomStore.TOKEN_PREFIX}${randomBytes(16).toString("hex")}`;
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const tokenPrefix = PostgresRoomStore.tokenPrefixFromToken(token);
+    const createdAt = nowIso();
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    await this.pool.query(
+      `INSERT INTO agent_tokens (
+         id, agent_id, token_hash, token_prefix, issuer_node_id, version, scopes, created_at, expires_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        newId(),
+        agentId,
+        tokenHash,
+        tokenPrefix,
+        PostgresRoomStore.NODE_ID,
+        1,
+        scopes || "agent",
+        createdAt,
+        expiresAt
+      ]
+    );
+    return { token, expiresAt };
+  }
+
+  async validateToken(token: string): Promise<{ agent: PlatformAgent; scopes: string } | null> {
+    const trimmed = String(token || "").trim();
+    if (!trimmed) {
+      return null;
+    }
+    const tokenHash = createHash("sha256").update(trimmed).digest("hex");
+    const tokenPrefix = PostgresRoomStore.tokenPrefixFromToken(trimmed);
+    const now = nowIso();
+    const result = await this.pool.query<TokenValidationRow>(
+      `SELECT
+         t.token_hash, t.scopes, t.expires_at, t.revoked_at,
+         a.id, a.nickname, a.handle, a.organization, a.specialty, a.tags, a.theme,
+         a.model_family, a.public_key, a.verification_url, a.home_url, a.created_at, a.updated_at
+       FROM agent_tokens t
+       JOIN platform_agents a ON a.id = t.agent_id
+       WHERE t.token_prefix = $1
+         AND t.revoked_at IS NULL
+         AND t.expires_at > $2
+       ORDER BY t.created_at DESC`,
+      [tokenPrefix, now]
+    );
+    const matched = result.rows.find((row) => row.token_hash === tokenHash);
+    if (!matched) {
+      return null;
+    }
+    return {
+      agent: this.mapPlatformAgent(matched),
+      scopes: matched.scopes || "agent"
+    };
+  }
+
+  async updateTokenLastUsed(tokenPrefix: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agent_tokens
+       SET last_used_at = $2
+       WHERE token_prefix = $1
+         AND revoked_at IS NULL`,
+      [tokenPrefix, nowIso()]
+    );
+  }
+
   private async persist(room: RoomSnapshot): Promise<void> {
     await this.pool.query(
       `INSERT INTO rooms (id, task, status, phase, created_at, updated_at, agent_ids_json, snapshot_json)
@@ -326,7 +562,60 @@ export class PostgresRoomStore implements IAppStore {
     };
   }
 
+  private mapPlatformAgent(row: PlatformAgentRow | TokenValidationRow): PlatformAgent {
+    return {
+      id: row.id,
+      nickname: row.nickname,
+      handle: row.handle,
+      organization: row.organization || undefined,
+      specialty: this.parseJsonArray(row.specialty),
+      tags: this.parseJsonArray(row.tags),
+      theme: row.theme || "dark",
+      modelFamily: row.model_family || undefined,
+      publicKey: row.public_key || undefined,
+      verificationUrl: row.verification_url || undefined,
+      homeUrl: row.home_url || undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  private parseJsonArray(raw: string): string[] {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
+}
+
+interface PlatformAgentRow {
+  id: string;
+  nickname: string;
+  handle: string;
+  organization: string | null;
+  specialty: string;
+  tags: string;
+  theme: string | null;
+  model_family: string | null;
+  public_key: string | null;
+  verification_url: string | null;
+  home_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TokenValidationRow extends PlatformAgentRow {
+  token_hash: string;
+  scopes: string;
+  expires_at: string;
+  revoked_at: string | null;
 }
