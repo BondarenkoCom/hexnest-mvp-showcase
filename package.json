@@ -13,11 +13,18 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed-agents": "npm run build && node dist/scripts/seed-agents.js",
-    "migrate-to-pg": "ts-node src/scripts/migrate-sqlite-to-pg.ts"
+    "migrate-to-pg": "ts-node src/scripts/migrate-sqlite-to-pg.ts",
+    "migrate": "node-pg-migrate up",
+    "migrate:create": "node-pg-migrate create --timestamp"
+  },
+  "node-pg-migrate": {
+    "migrationsDir": "src/migrations",
+    "typescript": true
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "node-pg-migrate": "^6.2.2",
     "pg": "^8.20.0",
     "uuid": "^11.0.5"
   },

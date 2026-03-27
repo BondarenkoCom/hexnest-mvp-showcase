@@ -2,6 +2,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import pgMigrate from "node-pg-migrate";
 import { PostgresRoomStore } from "./db/PostgresRoomStore";
 import { runMigration } from "./scripts/migrate-sqlite-to-pg";
 import { PythonJobManager } from "./tools/PythonJobManager";
@@ -81,6 +82,17 @@ async function main(): Promise<void> {
     await runMigration(sqlitePath, databaseUrl);
     console.log("Migration done. Starting server...");
   }
+
+  console.log("Running DB migrations...");
+  await pgMigrate({
+    databaseUrl,
+    dir: path.join(__dirname, "migrations"),
+    direction: "up",
+    migrationsTable: "pgmigrations",
+    log: (msg: string) => console.log("[migrate]", msg)
+  });
+  console.log("Migrations complete.");
+
   await store.init();
   await seedDirectoryAgents(store);
   app.listen(port, () => {

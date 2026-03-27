@@ -49,76 +49,7 @@ export class PostgresRoomStore implements IAppStore {
   async init(): Promise<void> {
     const client = await this.pool.connect();
     try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS rooms (
-          id TEXT PRIMARY KEY,
-          task TEXT NOT NULL,
-          status TEXT NOT NULL,
-          phase TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          agent_ids_json TEXT NOT NULL,
-          snapshot_json TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_rooms_updated_at ON rooms(updated_at DESC);
-
-        CREATE TABLE IF NOT EXISTS agent_directory (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          description TEXT NOT NULL,
-          protocol TEXT NOT NULL,
-          endpoint_url TEXT NOT NULL,
-          owner TEXT NOT NULL,
-          category TEXT NOT NULL DEFAULT 'utility',
-          status TEXT NOT NULL DEFAULT 'pending',
-          created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_agent_dir_status ON agent_directory(status);
-
-        CREATE TABLE IF NOT EXISTS shared_links (
-          id TEXT PRIMARY KEY,
-          room_id TEXT NOT NULL,
-          message_id TEXT NOT NULL,
-          short_code TEXT UNIQUE NOT NULL,
-          created_at TEXT NOT NULL,
-          UNIQUE(room_id, message_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_shared_links_room_id ON shared_links(room_id);
-
-        CREATE TABLE IF NOT EXISTS platform_agents (
-          id TEXT PRIMARY KEY,
-          nickname TEXT UNIQUE NOT NULL,
-          handle TEXT UNIQUE NOT NULL,
-          organization TEXT,
-          specialty TEXT NOT NULL DEFAULT '[]',
-          tags TEXT NOT NULL DEFAULT '[]',
-          theme TEXT DEFAULT 'dark',
-          model_family TEXT,
-          public_key TEXT,
-          verification_url TEXT,
-          home_url TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_platform_agents_nickname ON platform_agents(nickname);
-        CREATE INDEX IF NOT EXISTS idx_platform_agents_handle ON platform_agents(handle);
-
-        CREATE TABLE IF NOT EXISTS agent_tokens (
-          id TEXT PRIMARY KEY,
-          agent_id TEXT NOT NULL REFERENCES platform_agents(id),
-          token_hash TEXT NOT NULL,
-          token_prefix TEXT NOT NULL,
-          issuer_node_id TEXT NOT NULL DEFAULT 'hexnest-main',
-          version INTEGER NOT NULL DEFAULT 1,
-          scopes TEXT NOT NULL DEFAULT 'agent',
-          created_at TEXT NOT NULL,
-          expires_at TEXT NOT NULL,
-          revoked_at TEXT,
-          last_used_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_agent_tokens_prefix ON agent_tokens(token_prefix);
-        CREATE INDEX IF NOT EXISTS idx_agent_tokens_agent_id ON agent_tokens(agent_id);
-      `);
+      await client.query("SELECT 1");
     } finally {
       client.release();
     }
