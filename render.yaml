@@ -14,8 +14,6 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
-      - key: HEXNEST_DB_PATH
-        value: /var/lib/hexnest/hexnest.sqlite
       - key: HEXNEST_PYTHON_CMD
         value: python3
       - key: HEXNEST_PYTHON_WORKERS
