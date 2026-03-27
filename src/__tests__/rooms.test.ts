@@ -89,8 +89,8 @@ describe("GET /api/rooms", () => {
 
   it("lists created rooms", async () => {
     const store = new SQLiteRoomStore(tempDbPath());
-    store.createRoom({ name: "R1", task: "t1", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
-    store.createRoom({ name: "R2", task: "t2", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    await store.createRoom({ name: "R1", task: "t1", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    await store.createRoom({ name: "R2", task: "t2", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
     const res = await request(buildApp(store)).get("/api/rooms");
     expect(res.body.value).toHaveLength(2);
   });
@@ -106,7 +106,7 @@ describe("GET /api/rooms/:roomId", () => {
 
   it("returns room for known id", async () => {
     const store = new SQLiteRoomStore(tempDbPath());
-    const room = store.createRoom({ name: "Visible", task: "task", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const room = await store.createRoom({ name: "Visible", task: "task", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
     const res = await request(buildApp(store)).get(`/api/rooms/${room.id}`);
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(room.id);
@@ -118,10 +118,10 @@ describe("POST /api/rooms/:roomId/agents", () => {
   let app: express.Application;
   let roomId: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     store = new SQLiteRoomStore(tempDbPath());
     app = buildApp(store);
-    const room = store.createRoom({ name: "R", task: "t", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const room = await store.createRoom({ name: "R", task: "t", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
     roomId = room.id;
   });
 
@@ -160,7 +160,7 @@ describe("POST /api/rooms/:roomId/messages", () => {
   beforeEach(async () => {
     store = new SQLiteRoomStore(tempDbPath());
     app = buildApp(store);
-    const room = store.createRoom({ name: "R", task: "t", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const room = await store.createRoom({ name: "R", task: "t", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
     roomId = room.id;
 
     const agentRes = await request(app)
@@ -231,7 +231,7 @@ describe("POST /api/rooms/:roomId/messages/:messageId/share", () => {
   beforeEach(async () => {
     store = new SQLiteRoomStore(tempDbPath());
     app = buildApp(store);
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Share Room",
       task: "share test",
       agentIds: [],
@@ -273,7 +273,7 @@ describe("GET /api/rooms/:roomId/stats", () => {
   it("returns room message, share, viewer, and agent stats", async () => {
     const store = new SQLiteRoomStore(tempDbPath());
     const app = buildApp(store);
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Stats Room",
       task: "count everything",
       agentIds: [],
@@ -317,8 +317,8 @@ describe("GET /api/discover", () => {
 
   it("filters by query string q", async () => {
     const store = new SQLiteRoomStore(tempDbPath());
-    store.createRoom({ name: "Blockchain debate", task: "pros and cons of blockchain", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
-    store.createRoom({ name: "Other room", task: "something else entirely", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    await store.createRoom({ name: "Blockchain debate", task: "pros and cons of blockchain", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    await store.createRoom({ name: "Other room", task: "something else entirely", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
     const app = buildApp(store);
 
     const res = await request(app).get("/api/discover?q=blockchain");

@@ -15,7 +15,7 @@ export class RoomOrchestrator {
   ) {}
 
   public async runRoom(roomId: string): Promise<RoomSnapshot> {
-    const room = this.store.getRoom(roomId);
+    const room = await this.store.getRoom(roomId);
     if (!room) {
       throw new Error(`Room not found: ${roomId}`);
     }
@@ -40,8 +40,8 @@ export class RoomOrchestrator {
     return this.store.saveRoom(room);
   }
 
-  public finalize(roomId: string, note: string): RoomSnapshot {
-    const room = this.store.getRoom(roomId);
+  public async finalize(roomId: string, note: string): Promise<RoomSnapshot> {
+    const room = await this.store.getRoom(roomId);
     if (!room) {
       throw new Error(`Room not found: ${roomId}`);
     }

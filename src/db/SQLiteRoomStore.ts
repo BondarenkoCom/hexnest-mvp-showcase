@@ -1,9 +1,10 @@
 import fs from "fs";
 import path from "path";
-import { RoomSnapshot } from "../types/protocol";
+import { DirectoryAgent, RoomSnapshot, SharedLink } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
-import { RoomStore } from "../orchestration/RoomStore";
-import { CreateRoomInput } from "../orchestration/RoomStore";
+import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
+
+export type { DirectoryAgent, SharedLink };
 
 const sqlite = require("node:sqlite");
 
@@ -23,27 +24,7 @@ interface CountRow {
   count: number;
 }
 
-export interface DirectoryAgent {
-  id: string;
-  name: string;
-  description: string;
-  protocol: string;
-  endpointUrl: string;
-  owner: string;
-  category: string;
-  status: "pending" | "approved" | "rejected";
-  createdAt: string;
-}
-
-export interface SharedLink {
-  id: string;
-  roomId: string;
-  messageId: string;
-  shortCode: string;
-  createdAt: string;
-}
-
-export class SQLiteRoomStore implements RoomStore {
+export class SQLiteRoomStore implements IAppStore {
   private readonly db: any;
   private readonly getRoomStmt: any;
   private readonly listRoomsStmt: any;
@@ -223,7 +204,7 @@ export class SQLiteRoomStore implements RoomStore {
     `);
   }
 
-  public createRoom(input: CreateRoomInput): RoomSnapshot {
+  public async createRoom(input: CreateRoomInput): Promise<RoomSnapshot> {
     const now = nowIso();
     const room: RoomSnapshot = {
       id: newId(),
@@ -247,38 +228,36 @@ export class SQLiteRoomStore implements RoomStore {
     };
 
     this.persist(room);
-    return room;
+    return Promise.resolve(room);
   }
 
-  public getRoom(roomId: string): RoomSnapshot | undefined {
+  public async getRoom(roomId: string): Promise<RoomSnapshot | undefined> {
     const row = this.getRoomStmt.get({ id: roomId }) as RoomRow | undefined;
-    if (!row) {
-      return undefined;
-    }
-    return this.parseSnapshot(row.snapshot_json);
+    if (!row) return Promise.resolve(undefined);
+    return Promise.resolve(this.parseSnapshot(row.snapshot_json));
   }
 
-  public listRooms(): RoomSnapshot[] {
+  public async listRooms(): Promise<RoomSnapshot[]> {
     const rows = this.listRoomsStmt.all() as RoomRow[];
-    return rows.map((row) => this.parseSnapshot(row.snapshot_json));
+    return Promise.resolve(rows.map((row) => this.parseSnapshot(row.snapshot_json)));
   }
 
-  public saveRoom(room: RoomSnapshot): RoomSnapshot {
+  public async saveRoom(room: RoomSnapshot): Promise<RoomSnapshot> {
     room.updatedAt = nowIso();
     this.persist(room);
-    return room;
+    return Promise.resolve(room);
   }
 
   // ── Agent Directory ──
 
-  public addDirectoryAgent(input: {
+  public async addDirectoryAgent(input: {
     name: string;
     description: string;
     protocol: string;
     endpointUrl: string;
     owner: string;
     category?: string;
-  }): DirectoryAgent {
+  }): Promise<DirectoryAgent> {
     const agent: DirectoryAgent = {
       id: newId(),
       name: input.name,
@@ -301,15 +280,15 @@ export class SQLiteRoomStore implements RoomStore {
       status: agent.status,
       createdAt: agent.createdAt
     });
-    return agent;
+    return Promise.resolve(agent);
   }
 
-  public listDirectoryAgents(): DirectoryAgent[] {
+  public async listDirectoryAgents(): Promise<DirectoryAgent[]> {
     const rows = this.listAgentDirStmt.all() as Array<{
       id: string; name: string; description: string; protocol: string;
       endpoint_url: string; owner: string; category: string; status: string; created_at: string;
     }>;
-    return rows.map(r => ({
+    return Promise.resolve(rows.map(r => ({
       id: r.id,
       name: r.name,
       description: r.description,
@@ -319,29 +298,29 @@ export class SQLiteRoomStore implements RoomStore {
       category: r.category || "utility",
       status: r.status as DirectoryAgent["status"],
       createdAt: r.created_at
-    }));
+    })));
   }
 
-  public updateDirectoryAgentStatus(id: string, status: DirectoryAgent["status"]): void {
+  public async updateDirectoryAgentStatus(id: string, status: DirectoryAgent["status"]): Promise<void> {
     this.updateAgentDirStatusStmt.run({ id, status });
   }
 
-  public updateDirectoryAgentCategory(id: string, category: string): void {
+  public async updateDirectoryAgentCategory(id: string, category: string): Promise<void> {
     this.db.prepare(`UPDATE agent_directory SET category = @category WHERE id = @id`).run({ id, category });
   }
 
-  public getSharedLinkForMessage(roomId: string, messageId: string): SharedLink | undefined {
+  public async getSharedLinkForMessage(roomId: string, messageId: string): Promise<SharedLink | undefined> {
     const row = this.getSharedLinkByMessageStmt.get({ roomId, messageId }) as SharedLinkRow | undefined;
-    return row ? this.mapSharedLink(row) : undefined;
+    return Promise.resolve(row ? this.mapSharedLink(row) : undefined);
   }
 
-  public getSharedLinkByShortCode(shortCode: string): SharedLink | undefined {
+  public async getSharedLinkByShortCode(shortCode: string): Promise<SharedLink | undefined> {
     const row = this.getSharedLinkByShortCodeStmt.get({ shortCode }) as SharedLinkRow | undefined;
-    return row ? this.mapSharedLink(row) : undefined;
+    return Promise.resolve(row ? this.mapSharedLink(row) : undefined);
   }
 
-  public getOrCreateSharedLink(roomId: string, messageId: string, shortCode: string): SharedLink {
-    const existing = this.getSharedLinkForMessage(roomId, messageId);
+  public async getOrCreateSharedLink(roomId: string, messageId: string, shortCode: string): Promise<SharedLink> {
+    const existing = await this.getSharedLinkForMessage(roomId, messageId);
     if (existing) {
       return existing;
     }
@@ -364,12 +343,12 @@ export class SQLiteRoomStore implements RoomStore {
       });
       return link;
     } catch (error) {
-      const byMessage = this.getSharedLinkForMessage(roomId, messageId);
+      const byMessage = await this.getSharedLinkForMessage(roomId, messageId);
       if (byMessage) {
         return byMessage;
       }
 
-      const byShortCode = this.getSharedLinkByShortCode(shortCode);
+      const byShortCode = await this.getSharedLinkByShortCode(shortCode);
       if (byShortCode && (byShortCode.roomId !== roomId || byShortCode.messageId !== messageId)) {
         throw new Error(`shared short code collision: ${shortCode}`);
       }
@@ -378,47 +357,41 @@ export class SQLiteRoomStore implements RoomStore {
     }
   }
 
-  public countSharedLinksByRoom(roomId: string): number {
+  public async countSharedLinksByRoom(roomId: string): Promise<number> {
     const row = this.countSharedLinksByRoomStmt.get({ roomId }) as CountRow | undefined;
-    return Number(row?.count || 0);
+    return Promise.resolve(Number(row?.count || 0));
   }
 
-  public deleteRoom(roomId: string): boolean {
+  public async deleteRoom(roomId: string): Promise<boolean> {
     const result = this.deleteRoomStmt.run({ id: roomId }) as { changes?: number } | undefined;
     const deleted = Number(result?.changes || 0) > 0;
     if (deleted) {
       this.deleteSharedLinksByRoomStmt.run({ roomId });
     }
-    return deleted;
+    return Promise.resolve(deleted);
   }
 
-  public deleteMessage(roomId: string, messageId: string): boolean {
-    const room = this.getRoom(roomId);
-    if (!room) {
-      return false;
-    }
+  public async deleteMessage(roomId: string, messageId: string): Promise<boolean> {
+    const room = await this.getRoom(roomId);
+    if (!room) return Promise.resolve(false);
 
     const nextTimeline = room.timeline.filter((event) => event.id !== messageId);
-    if (nextTimeline.length === room.timeline.length) {
-      return false;
-    }
+    if (nextTimeline.length === room.timeline.length) return Promise.resolve(false);
 
     room.timeline = nextTimeline;
     this.deleteSharedLinksByMessageStmt.run({ roomId, messageId });
-    this.saveRoom(room);
-    return true;
+    await this.saveRoom(room);
+    return Promise.resolve(true);
   }
 
-  public clearTimeline(roomId: string): boolean {
-    const room = this.getRoom(roomId);
-    if (!room) {
-      return false;
-    }
+  public async clearTimeline(roomId: string): Promise<boolean> {
+    const room = await this.getRoom(roomId);
+    if (!room) return Promise.resolve(false);
 
     room.timeline = [];
     this.deleteSharedLinksByRoomStmt.run({ roomId });
-    this.saveRoom(room);
-    return true;
+    await this.saveRoom(room);
+    return Promise.resolve(true);
   }
 
   private persist(room: RoomSnapshot): void {

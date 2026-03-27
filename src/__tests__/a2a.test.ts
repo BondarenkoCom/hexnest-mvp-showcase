@@ -84,7 +84,7 @@ describe("POST /api/a2a", () => {
   });
 
   it("message/send posts a message and returns completed status", async () => {
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Test Room",
       task: "debate something",
       agentIds: [],
@@ -113,7 +113,7 @@ describe("POST /api/a2a", () => {
   });
 
   it("message/send without text joins room instead of posting", async () => {
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Join Room",
       task: "debate something",
       agentIds: [],
@@ -206,7 +206,7 @@ describe("POST /api/a2a", () => {
   });
 
   it("tasks/get returns room state for a known room", async () => {
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Known Room",
       task: "a task",
       agentIds: [],

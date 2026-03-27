@@ -1,5 +1,5 @@
 import express, { Request } from "express";
-import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { IAppStore } from "../orchestration/RoomStore";
 import { RoomSnapshot } from "../types/protocol";
 import {
   getPublicBaseUrl,
@@ -10,7 +10,7 @@ import {
 import { buildRoomShareDescription } from "../utils/room-builders";
 
 export function createPagesRouter(
-  store: SQLiteRoomStore,
+  store: IAppStore,
   indexHtmlTemplate: string,
   roomHtmlTemplate: string
 ): express.Router {
@@ -57,7 +57,7 @@ export function createPagesRouter(
     res.type("html").send(html);
   });
 
-  router.get("/room.html", (req, res) => {
+  router.get("/room.html", async (req, res) => {
     const roomIdRaw = req.query.roomId;
     const roomId = typeof roomIdRaw === "string" ? roomIdRaw.trim().slice(0, 120) : "";
     if (!roomId) {
@@ -65,7 +65,7 @@ export function createPagesRouter(
       return;
     }
 
-    const room = store.getRoom(roomId);
+    const room = await store.getRoom(roomId);
     if (!room) {
       res.redirect("/index.html");
       return;
@@ -74,8 +74,8 @@ export function createPagesRouter(
     sendRoomHtml(req, res, room);
   });
 
-  router.get("/r/:roomId", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/r/:roomId", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.redirect("/index.html");
       return;

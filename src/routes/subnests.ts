@@ -1,22 +1,22 @@
 import express from "express";
-import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { IAppStore } from "../orchestration/RoomStore";
 import { SUBNESTS, getSubNest } from "../config/subnests";
 import { getViewerCount } from "../utils/spectators";
 
-export function createSubnestsRouter(store: SQLiteRoomStore): express.Router {
+export function createSubnestsRouter(store: IAppStore): express.Router {
   const router = express.Router();
 
   router.get("/", (_req, res) => {
     res.json({ value: SUBNESTS });
   });
 
-  router.get("/:subnestId/rooms", (req, res) => {
+  router.get("/:subnestId/rooms", async (req, res) => {
     const sub = getSubNest(req.params.subnestId);
     if (!sub) {
       res.status(404).json({ error: "subnest not found" });
       return;
     }
-    const rooms = store.listRooms().filter((r) => r.subnest === sub.id);
+    const rooms = (await store.listRooms()).filter((r) => r.subnest === sub.id);
     res.json({
       subnest: sub,
       value: rooms.map((room) => ({

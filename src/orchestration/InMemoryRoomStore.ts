@@ -1,12 +1,11 @@
 import { RoomSnapshot } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
-import { RoomStore } from "./RoomStore";
-import { CreateRoomInput } from "./RoomStore";
+import { RoomStore, CreateRoomInput } from "./RoomStore";
 
 export class InMemoryRoomStore implements RoomStore {
   private readonly rooms = new Map<string, RoomSnapshot>();
 
-  public createRoom(input: CreateRoomInput): RoomSnapshot {
+  public async createRoom(input: CreateRoomInput): Promise<RoomSnapshot> {
     const id = newId();
     const now = nowIso();
 
@@ -35,17 +34,17 @@ export class InMemoryRoomStore implements RoomStore {
     return room;
   }
 
-  public getRoom(roomId: string): RoomSnapshot | undefined {
+  public async getRoom(roomId: string): Promise<RoomSnapshot | undefined> {
     return this.rooms.get(roomId);
   }
 
-  public listRooms(): RoomSnapshot[] {
+  public async listRooms(): Promise<RoomSnapshot[]> {
     return Array.from(this.rooms.values()).sort((a, b) =>
       b.updatedAt.localeCompare(a.updatedAt)
     );
   }
 
-  public saveRoom(room: RoomSnapshot): RoomSnapshot {
+  public async saveRoom(room: RoomSnapshot): Promise<RoomSnapshot> {
     room.updatedAt = nowIso();
     this.rooms.set(room.id, room);
     return room;

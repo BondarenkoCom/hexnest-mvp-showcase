@@ -30,7 +30,7 @@ describe("admin room deletion API", () => {
     store = new SQLiteRoomStore(tempDbPath());
     app = buildApp(store);
 
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Admin Room",
       task: "admin controls",
       agentIds: [],
@@ -78,7 +78,7 @@ describe("admin room deletion API", () => {
       deleted: "room",
       roomId
     });
-    expect(store.getRoom(roomId)).toBeUndefined();
+    expect(await store.getRoom(roomId)).toBeUndefined();
 
     const shareRedirect = await request(app).get(`/s/${shortCode}`);
     expect(shareRedirect.status).toBe(404);
@@ -97,17 +97,17 @@ describe("admin room deletion API", () => {
       roomId
     });
 
-    const room = store.getRoom(roomId);
+    const room = await store.getRoom(roomId);
     expect(room).toBeDefined();
-    expect(room?.timeline.some((event) => event.id === firstMessageId)).toBe(false);
-    expect(room?.timeline.some((event) => event.id === secondMessageId)).toBe(true);
+    expect(room?.timeline.some((event: { id: string }) => event.id === firstMessageId)).toBe(false);
+    expect(room?.timeline.some((event: { id: string }) => event.id === secondMessageId)).toBe(true);
 
     const shareRedirect = await request(app).get(`/s/${shortCode}`);
     expect(shareRedirect.status).toBe(404);
   });
 
   it("clears the timeline but keeps the room", async () => {
-    const initialCount = store.getRoom(roomId)?.timeline.length || 0;
+    const initialCount = (await store.getRoom(roomId))?.timeline.length || 0;
 
     const res = await request(app)
       .delete(`/api/rooms/${roomId}/messages`)
@@ -121,7 +121,7 @@ describe("admin room deletion API", () => {
       count: initialCount
     });
 
-    const room = store.getRoom(roomId);
+    const room = await store.getRoom(roomId);
     expect(room).toBeDefined();
     expect(room?.timeline).toEqual([]);
 
