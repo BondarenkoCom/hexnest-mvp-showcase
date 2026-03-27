@@ -25,7 +25,7 @@ describe("GET /s/:shortCode", () => {
     store = new SQLiteRoomStore(tempDbPath());
     app = buildApp(store);
 
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name: "Redirect Room",
       task: "redirect test",
       agentIds: [],

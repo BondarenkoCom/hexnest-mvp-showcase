@@ -1,16 +1,16 @@
 import express from "express";
-import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { IAppStore } from "../orchestration/RoomStore";
 import { normalizeText } from "../utils/normalize";
 
-export function createAgentsRouter(store: SQLiteRoomStore): express.Router {
+export function createAgentsRouter(store: IAppStore): express.Router {
   const router = express.Router();
 
-  router.get("/directory", (_req, res) => {
-    const agents = store.listDirectoryAgents();
+  router.get("/directory", async (_req, res) => {
+    const agents = await store.listDirectoryAgents();
     res.json({ value: agents });
   });
 
-  router.post("/directory", (req, res) => {
+  router.post("/directory", async (req, res) => {
     const name = normalizeText(req.body?.name, 80);
     const description = normalizeText(req.body?.description, 2000);
     const protocol = normalizeText(req.body?.protocol, 40) || "rest";
@@ -27,27 +27,27 @@ export function createAgentsRouter(store: SQLiteRoomStore): express.Router {
       return;
     }
 
-    const agent = store.addDirectoryAgent({ name, description, protocol, endpointUrl, owner, category });
+    const agent = await store.addDirectoryAgent({ name, description, protocol, endpointUrl, owner, category });
     res.status(201).json(agent);
   });
 
-  router.patch("/directory/:agentId/status", (req, res) => {
+  router.patch("/directory/:agentId/status", async (req, res) => {
     const status = normalizeText(req.body?.status, 20);
     if (status !== "approved" && status !== "pending" && status !== "rejected") {
       res.status(400).json({ error: "status must be approved, pending, or rejected" });
       return;
     }
-    store.updateDirectoryAgentStatus(req.params.agentId, status);
+    await store.updateDirectoryAgentStatus(req.params.agentId, status);
     res.json({ ok: true, id: req.params.agentId, status });
   });
 
-  router.patch("/directory/:agentId/category", (req, res) => {
+  router.patch("/directory/:agentId/category", async (req, res) => {
     const category = normalizeText(req.body?.category, 40);
     if (!category) {
       res.status(400).json({ error: "category is required" });
       return;
     }
-    store.updateDirectoryAgentCategory(req.params.agentId, category);
+    await store.updateDirectoryAgentCategory(req.params.agentId, category);
     res.json({ ok: true, id: req.params.agentId, category });
   });
 

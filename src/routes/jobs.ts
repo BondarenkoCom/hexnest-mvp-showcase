@@ -1,5 +1,5 @@
 import express from "express";
-import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { IAppStore } from "../orchestration/RoomStore";
 import {
   PythonJobManager,
   PythonJobUpdate,
@@ -12,110 +12,114 @@ import { normalizeText } from "../utils/normalize";
 import { newSystemEvent } from "../utils/room-builders";
 
 export function createPythonJobUpdateHandler(
-  store: SQLiteRoomStore
+  store: IAppStore
 ): (update: PythonJobUpdate) => void {
   return function onPythonJobUpdate(update: PythonJobUpdate): void {
-    const room = store.getRoom(update.job.roomId);
-    if (!room) return;
+    void (async () => {
+      const room = await store.getRoom(update.job.roomId);
+      if (!room) return;
 
-    upsertPythonJob(room, update.job);
+      upsertPythonJob(room, update.job);
 
-    if (update.kind === "queued") {
-      room.timeline.push(
-        newSystemEvent(room.id, "open_room", "python_job_queued",
-          `${update.job.agentName} queued Python job ${update.job.id.slice(0, 8)}`)
-      );
-    } else if (update.kind === "started") {
-      room.timeline.push(
-        newSystemEvent(room.id, "open_room", "python_job_started",
-          `${update.job.agentName} started Python job ${update.job.id.slice(0, 8)}`)
-      );
-    } else if (update.kind === "finished") {
-      room.timeline.push(
-        newSystemEvent(room.id, "open_room", `python_job_${update.job.status}`,
-          `${update.job.agentName} finished Python job ${update.job.id.slice(0, 8)} with status ${update.job.status}`)
-      );
-
-      room.artifacts.push({
-        id: newId(),
-        taskId: room.id,
-        type: "note",
-        label: `Python job ${update.job.id.slice(0, 8)} (${update.job.status})`,
-        producer: update.job.agentName,
-        timestamp: nowIso(),
-        content: [
-          `status=${update.job.status}`,
-          `exit_code=${String(update.job.exitCode)}`,
-          update.job.error ? `error=${update.job.error}` : "",
-          "",
-          "stdout:",
-          update.job.stdout || "",
-          "",
-          "stderr:",
-          update.job.stderr || ""
-        ]
-          .filter(Boolean)
-          .join("\n")
-      });
-    }
-
-    room.status = "open";
-    store.saveRoom(room);
-  };
-}
-
-export function createWebSearchJobUpdateHandler(
-  store: SQLiteRoomStore
-): (update: WebSearchJobUpdate) => void {
-  return function onWebSearchJobUpdate(update: WebSearchJobUpdate): void {
-    const room = store.getRoom(update.job.roomId);
-    if (!room) return;
-
-    if (!room.searchJobs) room.searchJobs = [];
-    const idx = room.searchJobs.findIndex((j) => j.id === update.job.id);
-    if (idx >= 0) room.searchJobs[idx] = update.job;
-    else room.searchJobs.unshift(update.job);
-
-    if (update.kind === "queued") {
-      room.timeline.push(
-        newSystemEvent(room.id, "open_room", "web_search_queued",
-          `${update.job.agentName} searched: "${update.job.query}"`)
-      );
-    } else if (update.kind === "started") {
-      room.timeline.push(
-        newSystemEvent(room.id, "open_room", "web_search_started",
-          `${update.job.agentName} web search running...`)
-      );
-    } else if (update.kind === "finished") {
-      room.timeline.push(
-        newSystemEvent(room.id, "open_room", `web_search_${update.job.status}`,
-          `${update.job.agentName} web search finished (${update.job.status})`)
-      );
-
-      if (update.job.results && update.job.results.length > 0) {
-        const content = update.job.results
-          .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
-          .join("\n\n");
+      if (update.kind === "queued") {
+        room.timeline.push(
+          newSystemEvent(room.id, "open_room", "python_job_queued",
+            `${update.job.agentName} queued Python job ${update.job.id.slice(0, 8)}`)
+        );
+      } else if (update.kind === "started") {
+        room.timeline.push(
+          newSystemEvent(room.id, "open_room", "python_job_started",
+            `${update.job.agentName} started Python job ${update.job.id.slice(0, 8)}`)
+        );
+      } else if (update.kind === "finished") {
+        room.timeline.push(
+          newSystemEvent(room.id, "open_room", `python_job_${update.job.status}`,
+            `${update.job.agentName} finished Python job ${update.job.id.slice(0, 8)} with status ${update.job.status}`)
+        );
 
         room.artifacts.push({
           id: newId(),
           taskId: room.id,
           type: "note",
-          label: `Web search: "${update.job.query}" (${update.job.results.length} results)`,
+          label: `Python job ${update.job.id.slice(0, 8)} (${update.job.status})`,
           producer: update.job.agentName,
           timestamp: nowIso(),
-          content: `Query: ${update.job.query}\n\n${content}`
+          content: [
+            `status=${update.job.status}`,
+            `exit_code=${String(update.job.exitCode)}`,
+            update.job.error ? `error=${update.job.error}` : "",
+            "",
+            "stdout:",
+            update.job.stdout || "",
+            "",
+            "stderr:",
+            update.job.stderr || ""
+          ]
+            .filter(Boolean)
+            .join("\n")
         });
       }
-    }
 
-    room.status = "open";
-    store.saveRoom(room);
+      room.status = "open";
+      await store.saveRoom(room);
+    })().catch(err => console.error("python job update error:", err));
+  };
+}
+
+export function createWebSearchJobUpdateHandler(
+  store: IAppStore
+): (update: WebSearchJobUpdate) => void {
+  return function onWebSearchJobUpdate(update: WebSearchJobUpdate): void {
+    void (async () => {
+      const room = await store.getRoom(update.job.roomId);
+      if (!room) return;
+
+      if (!room.searchJobs) room.searchJobs = [];
+      const idx = room.searchJobs.findIndex((j) => j.id === update.job.id);
+      if (idx >= 0) room.searchJobs[idx] = update.job;
+      else room.searchJobs.unshift(update.job);
+
+      if (update.kind === "queued") {
+        room.timeline.push(
+          newSystemEvent(room.id, "open_room", "web_search_queued",
+            `${update.job.agentName} searched: "${update.job.query}"`)
+        );
+      } else if (update.kind === "started") {
+        room.timeline.push(
+          newSystemEvent(room.id, "open_room", "web_search_started",
+            `${update.job.agentName} web search running...`)
+        );
+      } else if (update.kind === "finished") {
+        room.timeline.push(
+          newSystemEvent(room.id, "open_room", `web_search_${update.job.status}`,
+            `${update.job.agentName} web search finished (${update.job.status})`)
+        );
+
+        if (update.job.results && update.job.results.length > 0) {
+          const content = update.job.results
+            .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
+            .join("\n\n");
+
+          room.artifacts.push({
+            id: newId(),
+            taskId: room.id,
+            type: "note",
+            label: `Web search: "${update.job.query}" (${update.job.results.length} results)`,
+            producer: update.job.agentName,
+            timestamp: nowIso(),
+            content: `Query: ${update.job.query}\n\n${content}`
+          });
+        }
+      }
+
+      room.status = "open";
+      await store.saveRoom(room);
+    })().catch(err => console.error("web search job update error:", err));
   };
 }
 
 export function createJobsRouter(
-  store: SQLiteRoomStore,
+  store: IAppStore,
   pythonJobs: PythonJobManager,
   webSearch: WebSearchManager
 ): express.Router {
@@ -123,8 +127,8 @@ export function createJobsRouter(
 
   // ── Python Jobs ──
 
-  router.post("/rooms/:roomId/python-jobs", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/python-jobs", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -168,8 +172,8 @@ export function createJobsRouter(
     }
   });
 
-  router.get("/rooms/:roomId/python-jobs", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/python-jobs", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -177,8 +181,8 @@ export function createJobsRouter(
     res.json({ value: room.pythonJobs });
   });
 
-  router.get("/rooms/:roomId/python-jobs/:jobId", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/python-jobs/:jobId", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -203,8 +207,8 @@ export function createJobsRouter(
 
   // ── Web Search Jobs ──
 
-  router.post("/rooms/:roomId/search-jobs", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/search-jobs", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) { res.status(404).json({ error: "room not found" }); return; }
     if (!room.settings.webSearchEnabled) {
       res.status(400).json({ error: "Web search is disabled for this room. Enable it in room setup." });
@@ -238,8 +242,8 @@ export function createJobsRouter(
     }
   });
 
-  router.get("/rooms/:roomId/search-jobs", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/search-jobs", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) { res.status(404).json({ error: "room not found" }); return; }
     res.json(webSearch.listByRoom(room.id));
   });

@@ -16,7 +16,6 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=10000 \
-    HEXNEST_DB_PATH=/var/lib/hexnest/hexnest.sqlite \
     HEXNEST_PYTHON_CMD=python3
 
 WORKDIR /app
@@ -27,9 +26,7 @@ RUN apt-get update \
   && rm -f /usr/bin/curl /usr/bin/wget /usr/bin/nc /bin/nc /usr/bin/ping /bin/ping \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --gid 10001 hexnest \
-  && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin hexnest \
-  && mkdir -p /var/lib/hexnest \
-  && chown -R hexnest:hexnest /var/lib/hexnest
+  && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin hexnest
 
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force

@@ -130,3 +130,23 @@ export interface RoomSnapshot {
   artifacts: Artifact[];
   finalOutput?: string;
 }
+
+export interface DirectoryAgent {
+  id: string;
+  name: string;
+  description: string;
+  protocol: string;
+  endpointUrl: string;
+  owner: string;
+  category: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
+export interface SharedLink {
+  id: string;
+  roomId: string;
+  messageId: string;
+  shortCode: string;
+  createdAt: string;
+}

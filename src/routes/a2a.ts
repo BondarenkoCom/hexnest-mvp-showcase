@@ -1,5 +1,5 @@
 import express, { Request } from "express";
-import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { IAppStore } from "../orchestration/RoomStore";
 import { ConnectedAgent, RoomEvent } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { getPublicBaseUrl } from "../utils/html";
@@ -7,10 +7,10 @@ import { normalizeText, normalizeRoomName, normalizeConfidence } from "../utils/
 import { newSystemEvent } from "../utils/room-builders";
 import { getSubNest } from "../config/subnests";
 
-export function createA2ARouter(store: SQLiteRoomStore): express.Router {
+export function createA2ARouter(store: IAppStore): express.Router {
   const router = express.Router();
 
-  router.post("/a2a", (req, res) => {
+  router.post("/a2a", async (req, res) => {
     const body = req.body || {};
     const jsonrpc = body.jsonrpc;
     const method = body.method;
@@ -29,13 +29,13 @@ export function createA2ARouter(store: SQLiteRoomStore): express.Router {
     try {
       switch (method) {
         case "message/send":
-          handleA2AMessageSend(req, res, id, params, store);
+          await handleA2AMessageSend(req, res, id, params, store);
           return;
         case "tasks/send":
-          handleA2ATasksSend(req, res, id, params, store);
+          await handleA2ATasksSend(req, res, id, params, store);
           return;
         case "tasks/get":
-          handleA2ATasksGet(res, id, params, store);
+          await handleA2ATasksGet(res, id, params, store);
           return;
         default:
           res.status(400).json({
@@ -60,13 +60,13 @@ export function createA2ARouter(store: SQLiteRoomStore): express.Router {
   return router;
 }
 
-function handleA2AMessageSend(
+async function handleA2AMessageSend(
   req: Request,
   res: express.Response,
   rpcId: unknown,
   params: Record<string, unknown>,
-  store: SQLiteRoomStore
-): void {
+  store: IAppStore
+): Promise<void> {
   const message = params.message || params;
   const text = normalizeText(
     (message as Record<string, unknown>).text ??
@@ -91,7 +91,7 @@ function handleA2AMessageSend(
   );
 
   if (!roomId) {
-    const rooms = store.listRooms();
+    const rooms = await store.listRooms();
     res.json({
       jsonrpc: "2.0",
       id: rpcId,
@@ -117,7 +117,7 @@ function handleA2AMessageSend(
     return;
   }
 
-  const room = store.getRoom(roomId);
+  const room = await store.getRoom(roomId);
   if (!room) {
     res.json({
       jsonrpc: "2.0",
@@ -171,7 +171,7 @@ function handleA2AMessageSend(
     };
     room.timeline.push(event);
     room.status = "open";
-    store.saveRoom(room);
+    await store.saveRoom(room);
 
     res.json({
       jsonrpc: "2.0",
@@ -190,7 +190,7 @@ function handleA2AMessageSend(
       }
     });
   } else {
-    store.saveRoom(room);
+    await store.saveRoom(room);
     const chatMessages = room.timeline.filter(e => e.envelope.message_type === "chat");
     res.json({
       jsonrpc: "2.0",
@@ -221,13 +221,13 @@ function handleA2AMessageSend(
   }
 }
 
-function handleA2ATasksSend(
+async function handleA2ATasksSend(
   req: Request,
   res: express.Response,
   rpcId: unknown,
   params: Record<string, unknown>,
-  store: SQLiteRoomStore
-): void {
+  store: IAppStore
+): Promise<void> {
   const taskDef = (params.task || params) as Record<string, unknown>;
   const name = normalizeRoomName(taskDef.name ?? taskDef.title);
   const task = normalizeText(
@@ -254,7 +254,7 @@ function handleA2ATasksSend(
     return;
   }
 
-  const room = store.createRoom({
+  const room = await store.createRoom({
     name,
     task,
     agentIds: [],
@@ -284,7 +284,7 @@ function handleA2ATasksSend(
     room.timeline.push(
       newSystemEvent(room.id, "open_room", "agent_joined", `${agentName} created and joined via A2A`)
     );
-    store.saveRoom(room);
+    await store.saveRoom(room);
   }
 
   const baseUrl = getPublicBaseUrl(req);
@@ -312,12 +312,12 @@ function handleA2ATasksSend(
   });
 }
 
-function handleA2ATasksGet(
+async function handleA2ATasksGet(
   res: express.Response,
   rpcId: unknown,
   params: Record<string, unknown>,
-  store: SQLiteRoomStore
-): void {
+  store: IAppStore
+): Promise<void> {
   const taskId = normalizeText(params.id ?? params.taskId ?? params.roomId, 120);
   if (!taskId) {
     res.json({
@@ -328,7 +328,7 @@ function handleA2ATasksGet(
     return;
   }
 
-  const room = store.getRoom(taskId);
+  const room = await store.getRoom(taskId);
   if (!room) {
     res.json({
       jsonrpc: "2.0",

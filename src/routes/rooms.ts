@@ -1,5 +1,5 @@
 import express from "express";
-import { SQLiteRoomStore } from "../db/SQLiteRoomStore";
+import { IAppStore } from "../orchestration/RoomStore";
 import { ConnectedAgent, RoomEvent } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { getCanonicalPublicBaseUrl, getPublicBaseUrl } from "../utils/html";
@@ -24,7 +24,7 @@ import {
 } from "../utils/room-builders";
 import { getSubNest } from "../config/subnests";
 
-export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
+export function createRoomsRouter(store: IAppStore): express.Router {
   const router = express.Router();
 
   // ── Health & Stats ──
@@ -38,8 +38,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     });
   });
 
-  router.get("/stats", (_req, res) => {
-    const rooms = store.listRooms();
+  router.get("/stats", async (_req, res) => {
+    const rooms = await store.listRooms();
     const agentNames = new Set<string>();
     let totalMessages = 0;
     let activeRooms = 0;
@@ -72,12 +72,12 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
 
   // ── Discovery ──
 
-  router.get("/discover", (req, res) => {
+  router.get("/discover", async (req, res) => {
     const tags = (req.query.tags as string || "").toLowerCase().split(",").map(t => t.trim()).filter(Boolean);
     const q = (req.query.q as string || "").toLowerCase().trim();
     const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 10, 1), 50);
 
-    const rooms = store.listRooms().filter(r => r.status === "open");
+    const rooms = (await store.listRooms()).filter(r => r.status === "open");
 
     if (tags.length === 0 && !q) {
       const top = rooms.slice(0, limit).map(r => ({
@@ -187,8 +187,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
 
   // ── Rooms ──
 
-  router.get("/rooms", (_req, res) => {
-    const rooms = store.listRooms();
+  router.get("/rooms", async (_req, res) => {
+    const rooms = await store.listRooms();
     res.json({
       value: rooms.map((room) => ({
         id: room.id,
@@ -207,7 +207,7 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     });
   });
 
-  router.post("/rooms", (req, res) => {
+  router.post("/rooms", async (req, res) => {
     const name = normalizeRoomName(req.body?.name);
     const task = normalizeText(req.body?.task, 4000);
     const pythonShellEnabled = Boolean(req.body?.pythonShellEnabled);
@@ -224,7 +224,7 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
       return;
     }
 
-    const room = store.createRoom({
+    const room = await store.createRoom({
       name,
       task,
       agentIds: [],
@@ -235,7 +235,7 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
 
     const inviteIds = Array.isArray(req.body?.inviteAgentIds) ? req.body.inviteAgentIds : [];
     if (inviteIds.length > 0) {
-      const dirAgents = store.listDirectoryAgents().filter(
+      const dirAgents = (await store.listDirectoryAgents()).filter(
         (a) => a.status === "approved" && inviteIds.includes(a.id)
       );
       for (const dirAgent of dirAgents) {
@@ -254,15 +254,15 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
         );
       }
       if (dirAgents.length > 0) {
-        store.saveRoom(room);
+        await store.saveRoom(room);
       }
     }
 
     res.status(201).json(room);
   });
 
-  router.get("/rooms/:roomId", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -270,8 +270,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json({ ...room, viewers: getViewerCount(room.id) });
   });
 
-  router.get("/rooms/:roomId/stats", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/stats", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -280,14 +280,14 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json(
       buildRoomStats(
         room,
-        store.countSharedLinksByRoom(room.id),
+        await store.countSharedLinksByRoom(room.id),
         getTotalViewerCount(room.id)
       )
     );
   });
 
-  router.delete("/rooms/:roomId", requireAdmin, (req, res) => {
-    const deleted = store.deleteRoom(req.params.roomId);
+  router.delete("/rooms/:roomId", requireAdmin, async (req, res) => {
+    const deleted = await store.deleteRoom(req.params.roomId);
     if (!deleted) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -300,14 +300,14 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     });
   });
 
-  router.delete("/rooms/:roomId/messages/:messageId", requireAdmin, (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.delete("/rooms/:roomId/messages/:messageId", requireAdmin, async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
     }
 
-    const deleted = store.deleteMessage(room.id, req.params.messageId);
+    const deleted = await store.deleteMessage(room.id, req.params.messageId);
     if (!deleted) {
       res.status(404).json({ error: "message not found" });
       return;
@@ -321,15 +321,15 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     });
   });
 
-  router.delete("/rooms/:roomId/messages", requireAdmin, (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.delete("/rooms/:roomId/messages", requireAdmin, async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
     }
 
     const count = Array.isArray(room.timeline) ? room.timeline.length : 0;
-    const cleared = store.clearTimeline(room.id);
+    const cleared = await store.clearTimeline(room.id);
     if (!cleared) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -343,14 +343,14 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     });
   });
 
-  router.post("/rooms/:roomId/fork", (req, res) => {
-    const sourceRoom = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/fork", async (req, res) => {
+    const sourceRoom = await store.getRoom(req.params.roomId);
     if (!sourceRoom) {
       res.status(404).json({ error: "room not found" });
       return;
     }
 
-    const forkedRoom = store.createRoom({
+    const forkedRoom = await store.createRoom({
       name: normalizeRoomName(`Fork: ${sourceRoom.name}`),
       task: sourceRoom.task,
       agentIds: [],
@@ -362,13 +362,13 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     forkedRoom.timeline.push(
       newSystemEvent(forkedRoom.id, "open_room", "room_forked", `Forked from room ${sourceRoom.id}`)
     );
-    store.saveRoom(forkedRoom);
+    await store.saveRoom(forkedRoom);
 
     res.status(201).json(forkedRoom);
   });
 
-  router.post("/rooms/:roomId/summary", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/summary", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -378,8 +378,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.send(markdown);
   });
 
-  router.get("/rooms/:roomId/export", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/export", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -387,8 +387,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json(buildRoomKnowledgeExport(room));
   });
 
-  router.post("/rooms/:roomId/heartbeat", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/heartbeat", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -402,8 +402,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json({ viewers });
   });
 
-  router.get("/rooms/:roomId/connect", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/connect", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -411,8 +411,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json(buildRoomConnectBrief(req, room));
   });
 
-  router.get("/rooms/:roomId/agents", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/agents", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -420,8 +420,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json({ value: room.connectedAgents });
   });
 
-  router.post("/rooms/:roomId/agents", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/agents", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -456,7 +456,7 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
       newSystemEvent(room.id, "open_room", "agent_joined", `${name} joined the room`)
     );
     room.status = "open";
-    store.saveRoom(room);
+    await store.saveRoom(room);
 
     res.status(201).json({
       joinedAgent,
@@ -465,8 +465,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     });
   });
 
-  router.get("/rooms/:roomId/messages", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/messages", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -498,8 +498,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json({ roomId: room.id, count: messages.length, messages });
   });
 
-  router.post("/rooms/:roomId/messages/:messageId/share", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/messages/:messageId/share", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -522,7 +522,7 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     }
 
     try {
-      const sharedLink = store.getOrCreateSharedLink(room.id, message.id, shortCode);
+      const sharedLink = await store.getOrCreateSharedLink(room.id, message.id, shortCode);
       res.json({
         shortCode: sharedLink.shortCode,
         url: `${getCanonicalPublicBaseUrl()}/s/${sharedLink.shortCode}`
@@ -537,8 +537,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     }
   });
 
-  router.get("/rooms/:roomId/artifacts", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.get("/rooms/:roomId/artifacts", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -546,8 +546,8 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
     res.json({ roomId: room.id, count: room.artifacts.length, artifacts: room.artifacts });
   });
 
-  router.post("/rooms/:roomId/messages", (req, res) => {
-    const room = store.getRoom(req.params.roomId);
+  router.post("/rooms/:roomId/messages", async (req, res) => {
+    const room = await store.getRoom(req.params.roomId);
     if (!room) {
       res.status(404).json({ error: "room not found" });
       return;
@@ -628,7 +628,7 @@ export function createRoomsRouter(store: SQLiteRoomStore): express.Router {
 
     room.timeline.push(event);
     room.status = "open";
-    store.saveRoom(room);
+    await store.saveRoom(room);
     res.status(201).json(event);
   });
 

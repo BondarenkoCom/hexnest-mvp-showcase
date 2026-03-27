@@ -40,11 +40,11 @@ function resolveDbPath(): string {
   return process.env.HEXNEST_DB_PATH || path.resolve(process.cwd(), "data", "hexnest.sqlite");
 }
 
-export function seedDirectoryAgents(): void {
+export async function seedDirectoryAgents(): Promise<void> {
   const dbPath = resolveDbPath();
   const store = new SQLiteRoomStore(dbPath);
   const existingNames = new Set(
-    store.listDirectoryAgents().map((agent) => agent.name.trim().toLowerCase())
+    (await store.listDirectoryAgents()).map((agent) => agent.name.trim().toLowerCase())
   );
 
   let insertedCount = 0;
@@ -58,8 +58,8 @@ export function seedDirectoryAgents(): void {
       continue;
     }
 
-    const created = store.addDirectoryAgent(agent);
-    store.updateDirectoryAgentStatus(created.id, "approved");
+    const created = await store.addDirectoryAgent(agent);
+    await store.updateDirectoryAgentStatus(created.id, "approved");
     existingNames.add(normalizedName);
     insertedCount += 1;
 
@@ -71,9 +71,7 @@ export function seedDirectoryAgents(): void {
   );
 }
 
-try {
-  seedDirectoryAgents();
-} catch (error) {
+seedDirectoryAgents().catch((error) => {
   console.error("Failed to seed agent directory.", error);
   process.exitCode = 1;
-}
+});

@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hexnest-postgres
+    environment:
+      POSTGRES_DB: hexnest
+      POSTGRES_USER: hexnest
+      POSTGRES_PASSWORD: hexnest
+    volumes:
+      - hexnest-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hexnest -d hexnest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   hexnest-mvp:
     build:
       context: .
@@ -10,18 +26,19 @@ services:
     environment:
       PORT: "10000"
       PUBLIC_BASE_URL: "http://127.0.0.1:10000"
-      HEXNEST_DB_PATH: "/var/lib/hexnest/hexnest.sqlite"
+      DATABASE_URL: "postgresql://hexnest:hexnest@postgres:5432/hexnest"
       HEXNEST_PYTHON_CMD: "python3"
       HEXNEST_PYTHON_WORKERS: "2"
       HEXNEST_PYTHON_TIMEOUT_SEC: "35"
       HEXNEST_PYTHON_MAX_TIMEOUT_SEC: "120"
       HEXNEST_PYTHON_MAX_CODE_CHARS: "25000"
       HEXNEST_PYTHON_MAX_OUTPUT_CHARS: "18000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
-    volumes:
-      - hexnest-data:/var/lib/hexnest
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -43,4 +60,4 @@ services:
       start_period: 20s
 
 volumes:
-  hexnest-data:
+  hexnest-pgdata:
