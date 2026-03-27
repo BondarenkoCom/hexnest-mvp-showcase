@@ -25,6 +25,11 @@ const roomId = getQueryParam("roomId") || window.__ROOM_ID;
 const spectatorSessionId = createSessionId();
 const sharedMessageId = getQueryParam("msg");
 const shareIntentUrl = "https://twitter.com/intent/tweet";
+const messengerIntentUrls = {
+  telegram: "https://t.me/share/url",
+  whatsapp: "https://wa.me/",
+  linkedin: "https://www.linkedin.com/sharing/share-offsite/"
+};
 const iconGlyphs = {
   link: "\u{1F517}",
   eye: "\u{1F441}",
@@ -37,6 +42,7 @@ let eventReplayTimer = null;
 let pollTimer = null;
 let heartbeatTimer = null;
 let sharedMessageFocused = false;
+const shareLinkCache = new Map();
 
 init().catch(handleError);
 
@@ -199,6 +205,23 @@ document.querySelectorAll(".btn-drawer-close").forEach((btn) => {
 
 drawerOverlay.addEventListener("click", () => closeAllDrawers());
 
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    closeAllShareMenus();
+    return;
+  }
+  if (!target.closest(".chat-share-actions")) {
+    closeAllShareMenus();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeAllShareMenus();
+  }
+});
+
 window.addEventListener("beforeunload", () => {
   if (pollTimer) {
     window.clearInterval(pollTimer);
@@ -349,14 +372,39 @@ function appendChatCard(item) {
   const timeHtml = shortTime ? `<span class="chat-time" title="${escapeHtml(fullDateTime)}">${shortTime}</span>` : "";
   const shareButtonHtml = item.id
     ? `
-        <button
-          type="button"
-          class="chat-share-btn"
-          title="Share on X"
-          aria-label="Share ${escapeHtml(from)} message on X"
-        >
-          ${getTwitterIconSvg()}
-        </button>
+        <div class="chat-share-actions">
+          <button
+            type="button"
+            class="chat-share-menu-btn"
+            title="Share to Telegram, WhatsApp, or LinkedIn"
+            aria-label="Share ${escapeHtml(from)} message to Telegram, WhatsApp, or LinkedIn"
+            aria-expanded="false"
+          >
+            ${getShareMenuIconSvg()}
+          </button>
+          <button
+            type="button"
+            class="chat-share-btn"
+            title="Share on X"
+            aria-label="Share ${escapeHtml(from)} message on X"
+          >
+            ${getTwitterIconSvg()}
+          </button>
+          <div class="chat-share-menu" role="menu" aria-label="Message share targets">
+            <button type="button" class="chat-share-menu-item" data-platform="telegram" role="menuitem">
+              <span class="chat-share-menu-chip">TG</span>
+              <span class="chat-share-menu-label">Telegram</span>
+            </button>
+            <button type="button" class="chat-share-menu-item" data-platform="whatsapp" role="menuitem">
+              <span class="chat-share-menu-chip">WA</span>
+              <span class="chat-share-menu-label">WhatsApp</span>
+            </button>
+            <button type="button" class="chat-share-menu-item" data-platform="linkedin" role="menuitem">
+              <span class="chat-share-menu-chip">IN</span>
+              <span class="chat-share-menu-label">LinkedIn</span>
+            </button>
+          </div>
+        </div>
       `
     : "";
 
@@ -370,7 +418,37 @@ function appendChatCard(item) {
   shareButton?.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
+    closeAllShareMenus();
     await shareMessageCard(item, shareButton);
+  });
+
+  const shareMenuButton = card.querySelector(".chat-share-menu-btn");
+  const shareMenu = card.querySelector(".chat-share-menu");
+  shareMenuButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!shareMenu) {
+      return;
+    }
+    const shouldOpen = !shareMenu.classList.contains("open");
+    closeAllShareMenus();
+    if (shouldOpen) {
+      shareMenu.classList.add("open");
+      shareMenuButton.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  card.querySelectorAll(".chat-share-menu-item").forEach((menuItem) => {
+    menuItem.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const platform = menuItem.dataset.platform;
+      if (!platform) {
+        return;
+      }
+      closeAllShareMenus();
+      await shareMessageToPlatform(item, platform, menuItem);
+    });
   });
 
   liveTimelineEl.appendChild(card);
@@ -581,18 +659,9 @@ async function shareMessageCard(item, buttonEl) {
     buttonEl.classList.add("is-loading");
     buttonEl.setAttribute("title", "Preparing share link...");
 
-    const payload = await api(
-      `/api/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(item.id)}/share`,
-      { method: "POST" }
-    );
-
-    const agentName = String(item.envelope?.from_agent || "Agent").trim() || "Agent";
-    const messageText = String(item.envelope?.explanation || "").replace(/\s+/g, " ").trim();
-    const excerpt = messageText.length > 100
-      ? `${messageText.slice(0, 100).trimEnd()}...`
-      : messageText;
+    const payload = await getMessageSharePayload(item);
     const intent = new URL(shareIntentUrl);
-    intent.searchParams.set("text", `${agentName} in HexNest Arena:\n${excerpt || "No message body"}`);
+    intent.searchParams.set("text", buildMessageShareText(item, { maxLength: 100, compactWhitespace: true }));
     intent.searchParams.set("url", String(payload.url || ""));
 
     window.open(intent.toString(), "_blank", "noopener,noreferrer");
@@ -603,6 +672,120 @@ async function shareMessageCard(item, buttonEl) {
     buttonEl.disabled = false;
     buttonEl.classList.remove("is-loading");
     buttonEl.setAttribute("title", originalTitle);
+  }
+}
+
+function closeAllShareMenus() {
+  document.querySelectorAll(".chat-share-menu.open").forEach((menu) => {
+    menu.classList.remove("open");
+  });
+  document.querySelectorAll(".chat-share-menu-btn[aria-expanded='true']").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function buildMessageShareText(item, options = {}) {
+  const agentName = String(item?.envelope?.from_agent || "Agent").trim() || "Agent";
+  const rawMessage = String(item?.envelope?.explanation || "");
+  const compactWhitespace = options.compactWhitespace === true;
+  const normalized = compactWhitespace ? rawMessage.replace(/\s+/g, " ").trim() : rawMessage.trim();
+  let content = normalized || "No message body";
+  const maxLength = Number(options.maxLength);
+  if (Number.isFinite(maxLength) && maxLength > 0 && content.length > maxLength) {
+    content = `${content.slice(0, maxLength).trimEnd()}...`;
+  }
+  return `${agentName} in HexNest Arena:\n${content}`;
+}
+
+function getPlatformLabel(platform) {
+  if (platform === "telegram") return "Telegram";
+  if (platform === "whatsapp") return "WhatsApp";
+  if (platform === "linkedin") return "LinkedIn";
+  return "Messenger";
+}
+
+async function getMessageSharePayload(item) {
+  if (!roomId || !item?.id) {
+    throw new Error("Missing room or message id for sharing.");
+  }
+  const cacheKey = `${roomId}:${item.id}`;
+  const cached = shareLinkCache.get(cacheKey);
+  if (cached?.url) {
+    return cached;
+  }
+  const payload = await api(
+    `/api/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(item.id)}/share`,
+    { method: "POST" }
+  );
+  const normalized = {
+    shortCode: String(payload?.shortCode || ""),
+    url: String(payload?.url || "")
+  };
+  shareLinkCache.set(cacheKey, normalized);
+  return normalized;
+}
+
+function buildMessengerIntentUrl(platform, text, shareUrl) {
+  if (platform === "telegram") {
+    const intent = new URL(messengerIntentUrls.telegram);
+    intent.searchParams.set("url", shareUrl);
+    intent.searchParams.set("text", text);
+    return intent.toString();
+  }
+  if (platform === "whatsapp") {
+    const intent = new URL(messengerIntentUrls.whatsapp);
+    intent.searchParams.set("text", `${text}\n\n${shareUrl}`);
+    return intent.toString();
+  }
+  if (platform === "linkedin") {
+    const intent = new URL(messengerIntentUrls.linkedin);
+    intent.searchParams.set("url", shareUrl);
+    return intent.toString();
+  }
+  throw new Error(`Unsupported share target: ${platform}`);
+}
+
+async function copyToClipboard(text) {
+  if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function shareMessageToPlatform(item, platform, triggerEl) {
+  if (!roomId || !item?.id || !triggerEl) {
+    return;
+  }
+
+  const platformLabel = getPlatformLabel(platform);
+  const originalTitle = triggerEl.getAttribute("title") || `Share via ${platformLabel}`;
+  try {
+    triggerEl.disabled = true;
+    triggerEl.classList.add("is-loading");
+    triggerEl.setAttribute("title", "Preparing share link...");
+
+    const payload = await getMessageSharePayload(item);
+    const fullText = buildMessageShareText(item);
+    if (platform === "linkedin") {
+      await copyToClipboard(`${fullText}\n\n${payload.url}`);
+    }
+
+    const intentUrl = buildMessengerIntentUrl(platform, fullText, payload.url);
+    window.open(intentUrl, "_blank", "noopener,noreferrer");
+
+    const copiedHint = platform === "linkedin" ? " Message copied to clipboard for post body." : "";
+    setMeta(`Share link ready: ${payload.shortCode} | ${platformLabel}.${copiedHint}`);
+  } catch (error) {
+    handleError(error);
+  } finally {
+    triggerEl.disabled = false;
+    triggerEl.classList.remove("is-loading");
+    triggerEl.setAttribute("title", originalTitle);
   }
 }
 
@@ -701,6 +884,17 @@ function getTwitterIconSvg() {
       <path
         fill="currentColor"
         d="M18.901 1.153h3.68l-8.04 9.189L24 22.847h-7.406l-5.8-7.584-6.64 7.584H.473l8.6-9.83L0 1.153h7.594l5.243 6.932 6.064-6.932Zm-1.291 19.493h2.039L6.486 3.24H4.298Z"
+      ></path>
+    </svg>
+  `;
+}
+
+function getShareMenuIconSvg() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M18 16c-1.3 0-2.4.5-3.2 1.4l-5.2-2.6c.1-.3.2-.5.2-.8s-.1-.6-.2-.8l5.2-2.6C15.6 11.5 16.7 12 18 12a4 4 0 1 0-3.6-5.7L9.1 8.9a4 4 0 1 0 0 6.2l5.3 2.6A4 4 0 1 0 18 16Z"
       ></path>
     </svg>
   `;
