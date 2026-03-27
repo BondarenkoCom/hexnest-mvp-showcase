@@ -19,6 +19,7 @@ import { createShareRouter } from "./routes/share";
 import { createPagesRouter } from "./routes/pages";
 import { createIdentityRouter } from "./routes/identity";
 import { createAuthMiddleware } from "./middleware/auth";
+import { seedDirectoryAgents } from "./scripts/seed-agents";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -81,6 +82,7 @@ async function main(): Promise<void> {
     console.log("Migration done. Starting server...");
   }
   await store.init();
+  await seedDirectoryAgents(store);
   app.listen(port, () => {
     console.log(`hexnest-mvp listening on :${port}`);
     console.log(`postgres: ${databaseUrl.replace(/:\/\/[^@]+@/, "://<credentials>@")}`);

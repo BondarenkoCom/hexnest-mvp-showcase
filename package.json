@@ -12,7 +12,7 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "seed-agents": "node -e \"require('./dist/scripts/seed-agents.js')\"",
+    "seed-agents": "npm run build && node dist/scripts/seed-agents.js",
     "migrate-to-pg": "ts-node src/scripts/migrate-sqlite-to-pg.ts"
   },
   "dependencies": {
