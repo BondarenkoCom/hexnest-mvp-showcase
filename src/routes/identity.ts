@@ -2,6 +2,7 @@ import express from "express";
 import { IAppStore } from "../orchestration/RoomStore";
 import { RegisterAgentInput } from "../types/protocol";
 import { normalizeText } from "../utils/normalize";
+import { requireAdmin } from "../utils/auth";
 
 function normalizeArrayField(raw: unknown, maxItems: number, maxLen: number): string[] {
   if (!Array.isArray(raw)) {
@@ -48,6 +49,10 @@ function getAdminNicknames(): Set<string> {
   return new Set(values);
 }
 
+function resolveScopesForNickname(nickname: string): string {
+  return getAdminNicknames().has(String(nickname || "").toLowerCase()) ? "admin" : "agent";
+}
+
 export function createIdentityRouter(store: IAppStore): express.Router {
   const router = express.Router();
 
@@ -66,8 +71,10 @@ export function createIdentityRouter(store: IAppStore): express.Router {
 
     try {
       const profile = await store.registerAgent(input);
-      const isAdmin = getAdminNicknames().has(profile.nickname.toLowerCase());
-      const { token, expiresAt } = await store.createToken(profile.id, isAdmin ? "admin" : "agent");
+      const { token, expiresAt } = await store.createToken(
+        profile.id,
+        resolveScopesForNickname(profile.nickname)
+      );
       res.status(201).json({
         agentId: profile.id,
         token,
@@ -101,8 +108,6 @@ export function createIdentityRouter(store: IAppStore): express.Router {
       profile: unknown;
     }> = [];
     const errors: Array<{ index: number; nickname: string; error: string }> = [];
-    const adminNicknames = getAdminNicknames();
-
     for (let index = 0; index < agents.length; index += 1) {
       const input = normalizeRegisterInput(agents[index]);
       const nickname = input.nickname;
@@ -119,8 +124,10 @@ export function createIdentityRouter(store: IAppStore): express.Router {
         }
 
         const profile = await store.registerAgent(input);
-        const isAdmin = adminNicknames.has(profile.nickname.toLowerCase());
-        const { token, expiresAt } = await store.createToken(profile.id, isAdmin ? "admin" : "agent");
+        const { token, expiresAt } = await store.createToken(
+          profile.id,
+          resolveScopesForNickname(profile.nickname)
+        );
         registered.push({
           agentId: profile.id,
           token,
@@ -140,6 +147,94 @@ export function createIdentityRouter(store: IAppStore): express.Router {
     }
 
     res.json({ registered, errors });
+  });
+
+  router.post("/agents/register/from-directory", requireAdmin, async (_req, res) => {
+    const directoryAgents = (await store.listDirectoryAgents())
+      .filter((agent) => agent.status === "approved")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    const registered: Array<{
+      agentId: string;
+      nickname: string;
+      handle: string;
+      token: string;
+      expiresAt: string;
+      scopes: string;
+      created: boolean;
+      source: {
+        directoryAgentId: string;
+        protocol: string;
+        endpointUrl: string;
+      };
+    }> = [];
+    const errors: Array<{
+      directoryAgentId: string;
+      nickname: string;
+      error: string;
+    }> = [];
+
+    for (const entry of directoryAgents) {
+      const nickname = normalizeText(entry.name, 80);
+      if (!nickname) {
+        errors.push({
+          directoryAgentId: entry.id,
+          nickname: "",
+          error: "directory entry has empty name"
+        });
+        continue;
+      }
+
+      try {
+        let profile = await store.getAgentByNickname(nickname);
+        let created = false;
+
+        if (!profile) {
+          profile = await store.registerAgent({
+            nickname,
+            organization: normalizeText(entry.owner, 120) || undefined,
+            specialty: [normalizeText(entry.category, 40) || "none"],
+            tags: [
+              normalizeText(entry.protocol, 40) || "rest",
+              "directory-bootstrap"
+            ],
+            theme: "dark",
+            homeUrl: normalizeText(entry.endpointUrl, 500) || undefined
+          });
+          created = true;
+        }
+
+        const scopes = resolveScopesForNickname(profile.nickname);
+        const { token, expiresAt } = await store.createToken(profile.id, scopes);
+        registered.push({
+          agentId: profile.id,
+          nickname: profile.nickname,
+          handle: profile.handle,
+          token,
+          expiresAt,
+          scopes,
+          created,
+          source: {
+            directoryAgentId: entry.id,
+            protocol: entry.protocol,
+            endpointUrl: entry.endpointUrl
+          }
+        });
+      } catch (error) {
+        errors.push({
+          directoryAgentId: entry.id,
+          nickname,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      count: registered.length,
+      registered,
+      errors
+    });
   });
 
   router.get("/agents/profiles", async (_req, res) => {

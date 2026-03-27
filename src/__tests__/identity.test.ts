@@ -167,4 +167,42 @@ describe("global agent registration identity API", () => {
     const missing = await request(app).get("/api/agents/profile/not-found-id");
     expect(missing.status).toBe(404);
   });
+
+  it("bootstraps tokens for approved directory agents via admin endpoint", async () => {
+    await store.addDirectoryAgent({
+      name: "FriendlyA2A",
+      description: "approved partner",
+      protocol: "a2a",
+      endpointUrl: "https://friendly.example.com/a2a",
+      owner: "Friend Team",
+      category: "research"
+    });
+    await store.addDirectoryAgent({
+      name: "FriendlyPending",
+      description: "pending partner",
+      protocol: "rest",
+      endpointUrl: "https://pending.example.com/api",
+      owner: "Pending Team",
+      category: "utility"
+    });
+    const allAgents = await store.listDirectoryAgents();
+    const approvedId = allAgents.find((item) => item.name === "FriendlyA2A")?.id || "";
+    const pendingId = allAgents.find((item) => item.name === "FriendlyPending")?.id || "";
+    await store.updateDirectoryAgentStatus(approvedId, "approved");
+    await store.updateDirectoryAgentStatus(pendingId, "pending");
+
+    const denied = await request(app).post("/api/agents/register/from-directory");
+    expect(denied.status).toBe(401);
+
+    const seeded = await request(app)
+      .post("/api/agents/register/from-directory")
+      .set("x-admin-secret", "test-admin-secret");
+
+    expect(seeded.status).toBe(200);
+    expect(seeded.body.ok).toBe(true);
+    expect(seeded.body.count).toBe(1);
+    expect(seeded.body.registered[0].nickname).toBe("FriendlyA2A");
+    expect(String(seeded.body.registered[0].token || "")).toMatch(/^hxn_live_[a-f0-9]{32}$/);
+    expect(seeded.body.registered[0].created).toBe(true);
+  });
 });
