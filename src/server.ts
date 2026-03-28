@@ -4,7 +4,6 @@ import fs from "fs";
 import path from "path";
 import pgMigrate from "node-pg-migrate";
 import { PostgresRoomStore } from "./db/PostgresRoomStore";
-import { runMigration } from "./scripts/migrate-sqlite-to-pg";
 import { PythonJobManager } from "./tools/PythonJobManager";
 import { WebSearchManager } from "./tools/WebSearchManager";
 import { createAgentsRouter } from "./routes/agents";
@@ -76,13 +75,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 async function main(): Promise<void> {
-  const sqlitePath = process.env.HEXNEST_DB_PATH;
-  if (sqlitePath) {
-    console.log(`HEXNEST_DB_PATH detected — running SQLite → Postgres migration from ${sqlitePath}`);
-    await runMigration(sqlitePath, databaseUrl);
-    console.log("Migration done. Starting server...");
-  }
-
   console.log("Running DB migrations...");
   await pgMigrate({
     databaseUrl,

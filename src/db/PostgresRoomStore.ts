@@ -105,7 +105,7 @@ export class PostgresRoomStore implements IAppStore {
         [roomId]
       ),
       this.pool.query<TimelineRow>(
-        `SELECT id, timestamp, phase, envelope_json FROM room_timeline
+        `SELECT id, timestamp, phase, message_type, envelope_json FROM room_timeline
          WHERE room_id = $1 ORDER BY timestamp ASC`,
         [roomId]
       ),
@@ -134,7 +134,7 @@ export class PostgresRoomStore implements IAppStore {
     const result = await this.pool.query<RoomsRow>(
       `SELECT r.id, r.task, r.name, r.subnest, r.status, r.phase, r.created_at, r.updated_at,
               r.agent_ids_json, r.settings_json, r.final_output, r.connected_agents_json, r.search_jobs_json,
-              (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id)::int AS message_count
+              (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id AND rt.message_type != 'system')::int AS message_count
        FROM rooms r ORDER BY r.updated_at DESC`
     );
     return result.rows.map(row => this.buildSnapshot(row, [], [], []));
@@ -541,10 +541,10 @@ export class PostgresRoomStore implements IAppStore {
       );
       for (const event of room.timeline) {
         await client.query(
-          `INSERT INTO room_timeline (id, room_id, timestamp, phase, envelope_json)
-           VALUES ($1, $2, $3, $4, $5)
+          `INSERT INTO room_timeline (id, room_id, timestamp, phase, message_type, envelope_json)
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (id) DO NOTHING`,
-          [event.id, room.id, event.timestamp, event.phase, JSON.stringify(event.envelope)]
+          [event.id, room.id, event.timestamp, event.phase, event.envelope.message_type, JSON.stringify(event.envelope)]
         );
       }
       for (const artifact of room.artifacts) {
@@ -746,6 +746,7 @@ interface TimelineRow {
   id: string;
   timestamp: Date;
   phase: string;
+  message_type: string;
   envelope_json: AgentEnvelope;
 }
 

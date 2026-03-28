@@ -516,9 +516,7 @@ export function createRoomsRouter(store: IAppStore): express.Router {
     }
 
     const message = room.timeline.find(
-      (event) =>
-        event.id === req.params.messageId &&
-        event?.envelope?.message_type === "chat"
+      (event) => event.id === req.params.messageId && event.envelope.message_type !== "system"
     );
     if (!message) {
       res.status(404).json({ error: "message not found" });

@@ -166,10 +166,12 @@ export class SQLiteRoomStore implements IAppStore {
         room_id TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         phase TEXT NOT NULL,
+        message_type TEXT NOT NULL DEFAULT 'chat',
         envelope_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_room_timeline_room_id ON room_timeline(room_id);
       CREATE INDEX IF NOT EXISTS idx_room_timeline_room_ts ON room_timeline(room_id, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_room_timeline_message_type ON room_timeline(message_type);
     `);
 
     this.db.exec(`
@@ -225,7 +227,7 @@ export class SQLiteRoomStore implements IAppStore {
     this.listRoomsStmt = this.db.prepare(`
       SELECT r.id, r.task, r.name, r.subnest, r.status, r.phase, r.created_at, r.updated_at,
              r.agent_ids_json, r.settings_json, r.final_output, r.connected_agents_json, r.search_jobs_json,
-             (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id) AS message_count
+             (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id AND rt.message_type != 'system') AS message_count
       FROM rooms r
       ORDER BY r.updated_at DESC
     `);
@@ -254,15 +256,15 @@ export class SQLiteRoomStore implements IAppStore {
     `);
 
     this.getTimelineStmt = this.db.prepare(`
-      SELECT id, timestamp, phase, envelope_json
+      SELECT id, timestamp, phase, message_type, envelope_json
       FROM room_timeline
       WHERE room_id = @roomId
       ORDER BY timestamp ASC
     `);
 
     this.insertTimelineEventStmt = this.db.prepare(`
-      INSERT INTO room_timeline (id, room_id, timestamp, phase, envelope_json)
-      VALUES (@id, @roomId, @timestamp, @phase, @envelopeJson)
+      INSERT INTO room_timeline (id, room_id, timestamp, phase, message_type, envelope_json)
+      VALUES (@id, @roomId, @timestamp, @phase, @messageType, @envelopeJson)
       ON CONFLICT(id) DO NOTHING
     `);
 
@@ -767,6 +769,7 @@ export class SQLiteRoomStore implements IAppStore {
         roomId: room.id,
         timestamp: event.timestamp,
         phase: event.phase,
+        messageType: event.envelope.message_type,
         envelopeJson: JSON.stringify(event.envelope)
       });
     }
@@ -987,6 +990,7 @@ interface TimelineSqlRow {
   id: string;
   timestamp: string;
   phase: string;
+  message_type: string;
   envelope_json: string;
 }
 
