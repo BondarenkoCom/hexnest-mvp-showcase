@@ -39,6 +39,10 @@ export class SQLiteRoomStore implements IAppStore {
   private readonly getRoomStmt: any;
   private readonly listRoomsStmt: any;
   private readonly upsertRoomStmt: any;
+  private readonly getTimelineStmt: any;
+  private readonly insertTimelineEventStmt: any;
+  private readonly deleteTimelineByRoomStmt: any;
+  private readonly deleteTimelineByEventStmt: any;
   private readonly insertAgentDirStmt: any;
   private readonly listAgentDirStmt: any;
   private readonly getAgentDirStmt: any;
@@ -140,6 +144,18 @@ export class SQLiteRoomStore implements IAppStore {
       CREATE INDEX IF NOT EXISTS idx_agent_tokens_agent_id ON agent_tokens(agent_id);
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS room_timeline (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        envelope_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_room_timeline_room_id ON room_timeline(room_id);
+      CREATE INDEX IF NOT EXISTS idx_room_timeline_room_ts ON room_timeline(room_id, timestamp);
+    `);
+
     // Migration: add category column if missing (existing DBs)
     try {
       this.db.exec(`ALTER TABLE agent_directory ADD COLUMN category TEXT NOT NULL DEFAULT 'utility'`);
@@ -188,6 +204,27 @@ export class SQLiteRoomStore implements IAppStore {
         updated_at = excluded.updated_at,
         agent_ids_json = excluded.agent_ids_json,
         snapshot_json = excluded.snapshot_json
+    `);
+
+    this.getTimelineStmt = this.db.prepare(`
+      SELECT id, timestamp, phase, envelope_json
+      FROM room_timeline
+      WHERE room_id = @roomId
+      ORDER BY timestamp ASC
+    `);
+
+    this.insertTimelineEventStmt = this.db.prepare(`
+      INSERT INTO room_timeline (id, room_id, timestamp, phase, envelope_json)
+      VALUES (@id, @roomId, @timestamp, @phase, @envelopeJson)
+      ON CONFLICT(id) DO NOTHING
+    `);
+
+    this.deleteTimelineByRoomStmt = this.db.prepare(`
+      DELETE FROM room_timeline WHERE room_id = @roomId
+    `);
+
+    this.deleteTimelineByEventStmt = this.db.prepare(`
+      DELETE FROM room_timeline WHERE room_id = @roomId AND id = @id
     `);
 
     this.insertAgentDirStmt = this.db.prepare(`
@@ -283,12 +320,19 @@ export class SQLiteRoomStore implements IAppStore {
   public async getRoom(roomId: string): Promise<RoomSnapshot | undefined> {
     const row = this.getRoomStmt.get({ id: roomId }) as RoomRow | undefined;
     if (!row) return Promise.resolve(undefined);
-    return Promise.resolve(this.parseSnapshot(row.snapshot_json));
+    const room = this.parseSnapshot(row.snapshot_json);
+    const events = this.getTimelineStmt.all({ roomId }) as Array<{ id: string; timestamp: string; phase: string; envelope_json: string }>;
+    room.timeline = events.map(e => this.parseEvent(e));
+    return Promise.resolve(room);
   }
 
   public async listRooms(): Promise<RoomSnapshot[]> {
     const rows = this.listRoomsStmt.all() as RoomRow[];
-    return Promise.resolve(rows.map((row) => this.parseSnapshot(row.snapshot_json)));
+    return Promise.resolve(rows.map((row) => {
+      const room = this.parseSnapshot(row.snapshot_json);
+      room.timeline = [];
+      return room;
+    }));
   }
 
   public async saveRoom(room: RoomSnapshot): Promise<RoomSnapshot> {
@@ -551,11 +595,12 @@ export class SQLiteRoomStore implements IAppStore {
       FROM agent_tokens t
       JOIN platform_agents a ON a.id = t.agent_id
       WHERE t.token_prefix = @tokenPrefix
+        AND t.token_hash = @tokenHash
         AND t.revoked_at IS NULL
         AND t.expires_at > @now
-      ORDER BY t.created_at DESC
-    `).all({ tokenPrefix, now }) as TokenValidationSqlRow[];
-    const matched = rows.find((row) => row.token_hash === tokenHash);
+      LIMIT 1
+    `).all({ tokenPrefix, tokenHash, now }) as TokenValidationSqlRow[];
+    const matched = rows[0];
     if (!matched) {
       return Promise.resolve(null);
     }
@@ -578,39 +623,30 @@ export class SQLiteRoomStore implements IAppStore {
   }
 
   public async deleteRoom(roomId: string): Promise<boolean> {
+    this.deleteTimelineByRoomStmt.run({ roomId });
+    this.deleteSharedLinksByRoomStmt.run({ roomId });
     const result = this.deleteRoomStmt.run({ id: roomId }) as { changes?: number } | undefined;
-    const deleted = Number(result?.changes || 0) > 0;
-    if (deleted) {
-      this.deleteSharedLinksByRoomStmt.run({ roomId });
-    }
-    return Promise.resolve(deleted);
+    return Promise.resolve(Number(result?.changes || 0) > 0);
   }
 
   public async deleteMessage(roomId: string, messageId: string): Promise<boolean> {
-    const room = await this.getRoom(roomId);
-    if (!room) return Promise.resolve(false);
-
-    const nextTimeline = room.timeline.filter((event) => event.id !== messageId);
-    if (nextTimeline.length === room.timeline.length) return Promise.resolve(false);
-
-    room.timeline = nextTimeline;
+    const result = this.deleteTimelineByEventStmt.run({ roomId, id: messageId }) as { changes?: number } | undefined;
+    if (Number(result?.changes || 0) === 0) return Promise.resolve(false);
     this.deleteSharedLinksByMessageStmt.run({ roomId, messageId });
-    await this.saveRoom(room);
     return Promise.resolve(true);
   }
 
   public async clearTimeline(roomId: string): Promise<boolean> {
-    const room = await this.getRoom(roomId);
-    if (!room) return Promise.resolve(false);
-
-    room.timeline = [];
+    const row = this.db.prepare(`SELECT id FROM rooms WHERE id = @id LIMIT 1`).get({ id: roomId });
+    if (!row) return Promise.resolve(false);
+    this.deleteTimelineByRoomStmt.run({ roomId });
     this.deleteSharedLinksByRoomStmt.run({ roomId });
-    await this.saveRoom(room);
     return Promise.resolve(true);
   }
 
   private persist(room: RoomSnapshot): void {
-    const payload = {
+    const { timeline, ...roomWithoutTimeline } = room;
+    this.upsertRoomStmt.run({
       id: room.id,
       task: room.task,
       status: room.status,
@@ -618,59 +654,49 @@ export class SQLiteRoomStore implements IAppStore {
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
       agentIdsJson: JSON.stringify(room.agentIds),
-      snapshotJson: JSON.stringify(room)
-    };
-
-    this.upsertRoomStmt.run(payload);
+      snapshotJson: JSON.stringify(roomWithoutTimeline)
+    });
+    for (const event of timeline) {
+      this.insertTimelineEventStmt.run({
+        id: event.id,
+        roomId: room.id,
+        timestamp: event.timestamp,
+        phase: event.phase,
+        envelopeJson: JSON.stringify(event.envelope)
+      });
+    }
   }
 
   private parseSnapshot(raw: string): RoomSnapshot {
     const room = JSON.parse(raw) as RoomSnapshot;
-    if (!room.name || room.name.trim().length === 0) {
-      room.name = `Room ${room.id.slice(0, 8)}`;
-    }
-    if (!room.subnest) {
-      room.subnest = "general";
-    }
-    if (!room.settings) {
-      room.settings = { pythonShellEnabled: false, isPublic: true };
-    }
-    if (typeof room.settings.pythonShellEnabled !== "boolean") {
-      room.settings.pythonShellEnabled = false;
-    }
-    if (typeof room.settings.isPublic !== "boolean") {
-      room.settings.isPublic = true;
-    }
-    if (typeof room.settings.webSearchEnabled !== "boolean") {
-      room.settings.webSearchEnabled = false;
-    }
-    if (!room.timeline) {
-      room.timeline = [];
-    }
-    for (const event of room.timeline) {
-      if (!event?.envelope) {
-        continue;
-      }
-      if (event.envelope.scope !== "room" && event.envelope.scope !== "direct") {
-        event.envelope.scope = event.envelope.to_agent === "room" ? "room" : "direct";
-      }
-      if (typeof event.envelope.triggered_by !== "string" || event.envelope.triggered_by.length === 0) {
-        event.envelope.triggered_by = null;
-      }
-    }
-    if (!room.artifacts) {
-      room.artifacts = [];
-    }
-    if (!room.agentIds) {
-      room.agentIds = [];
-    }
-    if (!room.connectedAgents) {
-      room.connectedAgents = [];
-    }
-    if (!room.pythonJobs) {
-      room.pythonJobs = [];
-    }
+    if (!room.name || room.name.trim().length === 0) room.name = `Room ${room.id.slice(0, 8)}`;
+    if (!room.subnest) room.subnest = "general";
+    if (!room.settings) room.settings = { pythonShellEnabled: false, isPublic: true };
+    if (typeof room.settings.pythonShellEnabled !== "boolean") room.settings.pythonShellEnabled = false;
+    if (typeof room.settings.isPublic !== "boolean") room.settings.isPublic = true;
+    if (typeof room.settings.webSearchEnabled !== "boolean") room.settings.webSearchEnabled = false;
+    if (!room.timeline) room.timeline = [];
+    if (!room.artifacts) room.artifacts = [];
+    if (!room.agentIds) room.agentIds = [];
+    if (!room.connectedAgents) room.connectedAgents = [];
+    if (!room.pythonJobs) room.pythonJobs = [];
     return room;
+  }
+
+  private parseEvent(row: { id: string; timestamp: string; phase: string; envelope_json: string }): import("../types/protocol").RoomEvent {
+    const envelope = JSON.parse(row.envelope_json) as import("../types/protocol").AgentEnvelope;
+    if (envelope.scope !== "room" && envelope.scope !== "direct") {
+      envelope.scope = envelope.to_agent === "room" ? "room" : "direct";
+    }
+    if (typeof envelope.triggered_by !== "string" || envelope.triggered_by.length === 0) {
+      envelope.triggered_by = null;
+    }
+    return {
+      id: row.id,
+      timestamp: row.timestamp,
+      phase: row.phase as import("../types/protocol").RoomPhase,
+      envelope
+    };
   }
 
   private mapPlatformAgent(row: PlatformAgentSqlRow | TokenValidationSqlRow): PlatformAgent {

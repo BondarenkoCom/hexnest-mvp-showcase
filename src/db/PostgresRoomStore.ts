@@ -88,19 +88,32 @@ export class PostgresRoomStore implements IAppStore {
   }
 
   async getRoom(roomId: string): Promise<RoomSnapshot | undefined> {
-    const result = await this.pool.query<{ snapshot_json: string }>(
-      `SELECT snapshot_json FROM rooms WHERE id = $1 LIMIT 1`,
-      [roomId]
-    );
-    if (result.rows.length === 0) return undefined;
-    return this.parseSnapshot(result.rows[0].snapshot_json);
+    const [roomResult, timelineResult] = await Promise.all([
+      this.pool.query<{ snapshot_json: string }>(
+        `SELECT snapshot_json FROM rooms WHERE id = $1 LIMIT 1`,
+        [roomId]
+      ),
+      this.pool.query<{ id: string; timestamp: Date; phase: string; envelope_json: import("../types/protocol").AgentEnvelope }>(
+        `SELECT id, timestamp, phase, envelope_json FROM room_timeline
+         WHERE room_id = $1 ORDER BY timestamp ASC`,
+        [roomId]
+      )
+    ]);
+    if (roomResult.rows.length === 0) return undefined;
+    const room = this.parseSnapshot(roomResult.rows[0].snapshot_json);
+    room.timeline = timelineResult.rows.map(r => this.parseEvent(r));
+    return room;
   }
 
   async listRooms(): Promise<RoomSnapshot[]> {
     const result = await this.pool.query<{ snapshot_json: string }>(
       `SELECT snapshot_json FROM rooms ORDER BY updated_at DESC`
     );
-    return result.rows.map(r => this.parseSnapshot(r.snapshot_json));
+    return result.rows.map(r => {
+      const room = this.parseSnapshot(r.snapshot_json);
+      room.timeline = [];
+      return room;
+    });
   }
 
   async saveRoom(room: RoomSnapshot): Promise<RoomSnapshot> {
@@ -114,6 +127,7 @@ export class PostgresRoomStore implements IAppStore {
     try {
       await client.query("BEGIN");
       await client.query(`DELETE FROM shared_links WHERE room_id = $1`, [roomId]);
+      await client.query(`DELETE FROM room_timeline WHERE room_id = $1`, [roomId]);
       const result = await client.query(`DELETE FROM rooms WHERE id = $1`, [roomId]);
       await client.query("COMMIT");
       return (result.rowCount ?? 0) > 0;
@@ -126,29 +140,51 @@ export class PostgresRoomStore implements IAppStore {
   }
 
   async deleteMessage(roomId: string, messageId: string): Promise<boolean> {
-    const room = await this.getRoom(roomId);
-    if (!room) return false;
-
-    const nextTimeline = room.timeline.filter(e => e.id !== messageId);
-    if (nextTimeline.length === room.timeline.length) return false;
-
-    room.timeline = nextTimeline;
-    await this.pool.query(
-      `DELETE FROM shared_links WHERE room_id = $1 AND message_id = $2`,
-      [roomId, messageId]
-    );
-    await this.saveRoom(room);
-    return true;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `DELETE FROM room_timeline WHERE room_id = $1 AND id = $2`,
+        [roomId, messageId]
+      );
+      if ((result.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query(
+        `DELETE FROM shared_links WHERE room_id = $1 AND message_id = $2`,
+        [roomId, messageId]
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async clearTimeline(roomId: string): Promise<boolean> {
-    const room = await this.getRoom(roomId);
-    if (!room) return false;
+    const exists = await this.pool.query<{ id: string }>(
+      `SELECT id FROM rooms WHERE id = $1 LIMIT 1`,
+      [roomId]
+    );
+    if (exists.rows.length === 0) return false;
 
-    room.timeline = [];
-    await this.pool.query(`DELETE FROM shared_links WHERE room_id = $1`, [roomId]);
-    await this.saveRoom(room);
-    return true;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM room_timeline WHERE room_id = $1`, [roomId]);
+      await client.query(`DELETE FROM shared_links WHERE room_id = $1`, [roomId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async addDirectoryAgent(input: {
@@ -440,27 +476,46 @@ export class PostgresRoomStore implements IAppStore {
   }
 
   private async persist(room: RoomSnapshot): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO rooms (id, task, status, phase, created_at, updated_at, agent_ids_json, snapshot_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (id) DO UPDATE SET
-         task = EXCLUDED.task,
-         status = EXCLUDED.status,
-         phase = EXCLUDED.phase,
-         updated_at = EXCLUDED.updated_at,
-         agent_ids_json = EXCLUDED.agent_ids_json,
-         snapshot_json = EXCLUDED.snapshot_json`,
-      [
-        room.id,
-        room.task,
-        room.status,
-        room.phase,
-        room.createdAt,
-        room.updatedAt,
-        JSON.stringify(room.agentIds),
-        JSON.stringify(room)
-      ]
-    );
+    const { timeline, ...roomWithoutTimeline } = room;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO rooms (id, task, status, phase, created_at, updated_at, agent_ids_json, snapshot_json)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           task = EXCLUDED.task,
+           status = EXCLUDED.status,
+           phase = EXCLUDED.phase,
+           updated_at = EXCLUDED.updated_at,
+           agent_ids_json = EXCLUDED.agent_ids_json,
+           snapshot_json = EXCLUDED.snapshot_json`,
+        [
+          room.id,
+          room.task,
+          room.status,
+          room.phase,
+          room.createdAt,
+          room.updatedAt,
+          JSON.stringify(room.agentIds),
+          JSON.stringify(roomWithoutTimeline)
+        ]
+      );
+      for (const event of timeline) {
+        await client.query(
+          `INSERT INTO room_timeline (id, room_id, timestamp, phase, envelope_json)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (id) DO NOTHING`,
+          [event.id, room.id, event.timestamp, event.phase, JSON.stringify(event.envelope)]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   private parseSnapshot(raw: string): RoomSnapshot {
@@ -472,20 +527,27 @@ export class PostgresRoomStore implements IAppStore {
     if (typeof room.settings.isPublic !== "boolean") room.settings.isPublic = true;
     if (typeof room.settings.webSearchEnabled !== "boolean") room.settings.webSearchEnabled = false;
     if (!room.timeline) room.timeline = [];
-    for (const event of room.timeline) {
-      if (!event?.envelope) continue;
-      if (event.envelope.scope !== "room" && event.envelope.scope !== "direct") {
-        event.envelope.scope = event.envelope.to_agent === "room" ? "room" : "direct";
-      }
-      if (typeof event.envelope.triggered_by !== "string" || event.envelope.triggered_by.length === 0) {
-        event.envelope.triggered_by = null;
-      }
-    }
     if (!room.artifacts) room.artifacts = [];
     if (!room.agentIds) room.agentIds = [];
     if (!room.connectedAgents) room.connectedAgents = [];
     if (!room.pythonJobs) room.pythonJobs = [];
     return room;
+  }
+
+  private parseEvent(row: { id: string; timestamp: Date; phase: string; envelope_json: import("../types/protocol").AgentEnvelope }): import("../types/protocol").RoomEvent {
+    const envelope = row.envelope_json as import("../types/protocol").AgentEnvelope;
+    if (envelope.scope !== "room" && envelope.scope !== "direct") {
+      envelope.scope = envelope.to_agent === "room" ? "room" : "direct";
+    }
+    if (typeof envelope.triggered_by !== "string" || envelope.triggered_by.length === 0) {
+      envelope.triggered_by = null;
+    }
+    return {
+      id: row.id,
+      timestamp: row.timestamp instanceof Date ? row.timestamp.toISOString() : row.timestamp,
+      phase: row.phase as import("../types/protocol").RoomPhase,
+      envelope
+    };
   }
 
   private mapSharedLink(row: {
