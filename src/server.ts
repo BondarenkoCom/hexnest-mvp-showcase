@@ -2,6 +2,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import pgMigrate from "node-pg-migrate";
 import { PostgresRoomStore } from "./db/PostgresRoomStore";
 import { runMigration } from "./scripts/migrate-sqlite-to-pg";
 import { PythonJobManager } from "./tools/PythonJobManager";
@@ -17,6 +18,9 @@ import {
 import { createA2ARouter } from "./routes/a2a";
 import { createShareRouter } from "./routes/share";
 import { createPagesRouter } from "./routes/pages";
+import { createIdentityRouter } from "./routes/identity";
+import { createAuthMiddleware } from "./middleware/auth";
+import { seedDirectoryAgents } from "./scripts/seed-agents";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -49,9 +53,11 @@ app.use("/api", (_req, res, next) => {
   };
   next();
 });
+app.use(createAuthMiddleware(store));
 
 app.use("/api/agents", createAgentsRouter(store));
 app.use("/api/subnests", createSubnestsRouter(store));
+app.use("/api", createIdentityRouter(store));
 app.use("/api", createRoomsRouter(store));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
 app.use("/api", createA2ARouter(store));
@@ -76,7 +82,19 @@ async function main(): Promise<void> {
     await runMigration(sqlitePath, databaseUrl);
     console.log("Migration done. Starting server...");
   }
+
+  console.log("Running DB migrations...");
+  await pgMigrate({
+    databaseUrl,
+    dir: path.join(__dirname, "migrations"),
+    direction: "up",
+    migrationsTable: "pgmigrations",
+    log: (msg: string) => console.log("[migrate]", msg)
+  });
+  console.log("Migrations complete.");
+
   await store.init();
+  await seedDirectoryAgents(store);
   app.listen(port, () => {
     console.log(`hexnest-mvp listening on :${port}`);
     console.log(`postgres: ${databaseUrl.replace(/:\/\/[^@]+@/, "://<credentials>@")}`);

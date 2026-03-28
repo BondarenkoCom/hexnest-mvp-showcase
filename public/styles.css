@@ -1468,6 +1468,50 @@ select option {
   color: var(--warn);
 }
 
+.agent-field-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.agent-specialty-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.agent-token-box {
+  margin-top: 14px;
+  border: 1px solid rgba(255, 192, 110, 0.35);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(27, 19, 7, 0.55);
+}
+
+.agent-token-value {
+  margin: 8px 0 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(22, 210, 255, 0.22);
+  background: rgba(7, 16, 26, 0.9);
+  color: var(--cyan-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.btn-secondary {
+  background: rgba(9, 19, 32, 0.82);
+  border-color: rgba(22, 210, 255, 0.45);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: rgba(22, 210, 255, 0.7);
+  background: rgba(22, 210, 255, 0.13);
+}
+
 .chip-ok {
   background: rgba(22, 210, 80, 0.18);
   color: #6eff9e;
@@ -1483,6 +1527,10 @@ select option {
 .chip-sm {
   font-size: 0.72rem;
   padding: 2px 7px;
+}
+
+.hidden {
+  display: none !important;
 }
 
 /* ── Agent Picker Button ── */

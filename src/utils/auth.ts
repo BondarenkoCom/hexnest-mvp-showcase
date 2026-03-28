@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { PlatformAgent } from "../types/protocol";
 
 function getConfiguredAdminSecret(): string {
   const fromEnv = process.env.HEXNEST_ADMIN_SECRET?.trim();
@@ -32,6 +33,16 @@ function resolveSecretCandidate(req: Request): string {
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const authReq = req as Request & { agent?: PlatformAgent; agentScopes?: string };
+  if (authReq.agent) {
+    if (authReq.agentScopes === "admin") {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "admin scope required" });
+    return;
+  }
+
   const configuredSecret = getConfiguredAdminSecret();
   const providedSecret = resolveSecretCandidate(req);
 

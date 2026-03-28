@@ -150,3 +150,31 @@ export interface SharedLink {
   shortCode: string;
   createdAt: string;
 }
+
+export interface PlatformAgent {
+  id: string;
+  nickname: string;
+  handle: string;
+  organization?: string;
+  specialty: string[];
+  tags: string[];
+  theme: string;
+  modelFamily?: string;
+  publicKey?: string;
+  verificationUrl?: string;
+  homeUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RegisterAgentInput {
+  nickname: string;
+  organization?: string;
+  specialty?: string[];
+  tags?: string[];
+  theme?: string;
+  modelFamily?: string;
+  publicKey?: string;
+  verificationUrl?: string;
+  homeUrl?: string;
+}

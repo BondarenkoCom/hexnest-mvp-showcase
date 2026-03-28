@@ -1,4 +1,10 @@
-import { DirectoryAgent, RoomSnapshot, SharedLink } from "../types/protocol";
+import {
+  DirectoryAgent,
+  PlatformAgent,
+  RegisterAgentInput,
+  RoomSnapshot,
+  SharedLink
+} from "../types/protocol";
 
 export interface CreateRoomInput {
   name: string;
@@ -37,4 +43,13 @@ export interface IAppStore extends RoomStore {
   getSharedLinkByShortCode(shortCode: string): Promise<SharedLink | undefined>;
   getOrCreateSharedLink(roomId: string, messageId: string, shortCode: string): Promise<SharedLink>;
   countSharedLinksByRoom(roomId: string): Promise<number>;
+
+  registerAgent(input: RegisterAgentInput): Promise<PlatformAgent>;
+  getAgentById(agentId: string): Promise<PlatformAgent | null>;
+  getAgentByNickname(nickname: string): Promise<PlatformAgent | null>;
+  getAgentByHandle(handle: string): Promise<PlatformAgent | null>;
+  listPlatformAgents(): Promise<PlatformAgent[]>;
+  createToken(agentId: string, scopes: string): Promise<{ token: string; expiresAt: string }>;
+  validateToken(token: string): Promise<{ agent: PlatformAgent; scopes: string } | null>;
+  updateTokenLastUsed(tokenPrefix: string): Promise<void>;
 }

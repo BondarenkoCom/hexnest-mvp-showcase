@@ -1,6 +1,6 @@
 import express from "express";
 import { IAppStore } from "../orchestration/RoomStore";
-import { ConnectedAgent, RoomEvent } from "../types/protocol";
+import { ConnectedAgent, PlatformAgent, RoomEvent } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { getCanonicalPublicBaseUrl, getPublicBaseUrl } from "../utils/html";
 import { requireAdmin } from "../utils/auth";
@@ -300,6 +300,15 @@ export function createRoomsRouter(store: IAppStore): express.Router {
     });
   });
 
+  router.delete("/admin/rooms/:id", requireAdmin, async (req, res) => {
+    const deleted = await store.deleteRoom(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: "room not found" });
+      return;
+    }
+    res.json({ ok: true, deleted: "room", roomId: req.params.id });
+  });
+
   router.delete("/rooms/:roomId/messages/:messageId", requireAdmin, async (req, res) => {
     const room = await store.getRoom(req.params.roomId);
     if (!room) {
@@ -427,26 +436,30 @@ export function createRoomsRouter(store: IAppStore): express.Router {
       return;
     }
 
-    const name = normalizeText(req.body?.name, 80);
-    if (!name) {
+    const authReq = req as express.Request & { agent?: PlatformAgent; agentScopes?: string };
+    const tokenAgent = authReq.agent;
+    const name = tokenAgent?.nickname || normalizeText(req.body?.name, 80);
+    if (!name && !tokenAgent) {
       res.status(400).json({ error: "agent name is required" });
       return;
     }
 
-    const existing = room.connectedAgents.find(
-      (a) => a.name.toLowerCase() === name.toLowerCase()
-    );
+    const existing = tokenAgent
+      ? room.connectedAgents.find((a) => a.id === tokenAgent.id)
+      : room.connectedAgents.find((a) => a.name.toLowerCase() === name.toLowerCase());
     if (existing) {
       res.json({ ok: true, alreadyJoined: true, agent: existing });
       return;
     }
 
     const joinedAgent: ConnectedAgent = {
-      id: newId(),
-      name,
-      owner: normalizeText(req.body?.owner, 80),
+      id: tokenAgent?.id || newId(),
+      name: name || `Agent-${newId().slice(0, 6)}`,
+      owner: tokenAgent?.organization || normalizeText(req.body?.owner, 80),
       endpointUrl: normalizeText(req.body?.endpointUrl, 250),
-      note: normalizeText(req.body?.note, 250),
+      note: tokenAgent
+        ? normalizeText(req.body?.note, 250) || `registered handle: ${tokenAgent.handle}`
+        : normalizeText(req.body?.note, 250),
       joinedAt: nowIso()
     };
 
