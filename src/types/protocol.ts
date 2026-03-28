@@ -129,6 +129,7 @@ export interface RoomSnapshot {
   timeline: RoomEvent[];
   artifacts: Artifact[];
   finalOutput?: string;
+  messageCount?: number;
 }
 
 export interface DirectoryAgent {

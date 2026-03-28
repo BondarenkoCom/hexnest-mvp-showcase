@@ -1,11 +1,20 @@
 import { createHash, randomBytes } from "crypto";
 import { Pool } from "pg";
 import {
+  AgentEnvelope,
+  Artifact,
+  ConnectedAgent,
   DirectoryAgent,
   PlatformAgent,
+  PythonJob,
+  PythonJobStatus,
   RegisterAgentInput,
+  RoomEvent,
+  RoomPhase,
   RoomSnapshot,
-  SharedLink
+  RoomStatus,
+  SharedLink,
+  WebSearchJob
 } from "../types/protocol";
 import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
 import { newId, nowIso } from "../utils/ids";
@@ -88,32 +97,47 @@ export class PostgresRoomStore implements IAppStore {
   }
 
   async getRoom(roomId: string): Promise<RoomSnapshot | undefined> {
-    const [roomResult, timelineResult] = await Promise.all([
-      this.pool.query<{ snapshot_json: string }>(
-        `SELECT snapshot_json FROM rooms WHERE id = $1 LIMIT 1`,
+    const [roomResult, timelineResult, artifactsResult, jobsResult] = await Promise.all([
+      this.pool.query<RoomsRow>(
+        `SELECT id, task, name, subnest, status, phase, created_at, updated_at,
+                agent_ids_json, settings_json, final_output, connected_agents_json, search_jobs_json
+         FROM rooms WHERE id = $1 LIMIT 1`,
         [roomId]
       ),
-      this.pool.query<{ id: string; timestamp: Date; phase: string; envelope_json: import("../types/protocol").AgentEnvelope }>(
+      this.pool.query<TimelineRow>(
         `SELECT id, timestamp, phase, envelope_json FROM room_timeline
          WHERE room_id = $1 ORDER BY timestamp ASC`,
+        [roomId]
+      ),
+      this.pool.query<ArtifactRow>(
+        `SELECT id, room_id, task_id, type, label, content, producer, timestamp
+         FROM room_artifacts WHERE room_id = $1 ORDER BY timestamp ASC`,
+        [roomId]
+      ),
+      this.pool.query<PythonJobRow>(
+        `SELECT id, room_id, agent_id, agent_name, status, code, created_at,
+                started_at, finished_at, timeout_sec, exit_code, stdout, stderr, error, output_truncated
+         FROM room_python_jobs WHERE room_id = $1 ORDER BY created_at ASC`,
         [roomId]
       )
     ]);
     if (roomResult.rows.length === 0) return undefined;
-    const room = this.parseSnapshot(roomResult.rows[0].snapshot_json);
-    room.timeline = timelineResult.rows.map(r => this.parseEvent(r));
-    return room;
+    return this.buildSnapshot(
+      roomResult.rows[0],
+      timelineResult.rows.map(r => this.parseEvent(r)),
+      artifactsResult.rows.map(r => this.mapArtifactRow(r)),
+      jobsResult.rows.map(r => this.mapPythonJobRow(r))
+    );
   }
 
   async listRooms(): Promise<RoomSnapshot[]> {
-    const result = await this.pool.query<{ snapshot_json: string }>(
-      `SELECT snapshot_json FROM rooms ORDER BY updated_at DESC`
+    const result = await this.pool.query<RoomsRow>(
+      `SELECT r.id, r.task, r.name, r.subnest, r.status, r.phase, r.created_at, r.updated_at,
+              r.agent_ids_json, r.settings_json, r.final_output, r.connected_agents_json, r.search_jobs_json,
+              (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id)::int AS message_count
+       FROM rooms r ORDER BY r.updated_at DESC`
     );
-    return result.rows.map(r => {
-      const room = this.parseSnapshot(r.snapshot_json);
-      room.timeline = [];
-      return room;
-    });
+    return result.rows.map(row => this.buildSnapshot(row, [], [], []));
   }
 
   async saveRoom(room: RoomSnapshot): Promise<RoomSnapshot> {
@@ -128,6 +152,8 @@ export class PostgresRoomStore implements IAppStore {
       await client.query("BEGIN");
       await client.query(`DELETE FROM shared_links WHERE room_id = $1`, [roomId]);
       await client.query(`DELETE FROM room_timeline WHERE room_id = $1`, [roomId]);
+      await client.query(`DELETE FROM room_artifacts WHERE room_id = $1`, [roomId]);
+      await client.query(`DELETE FROM room_python_jobs WHERE room_id = $1`, [roomId]);
       const result = await client.query(`DELETE FROM rooms WHERE id = $1`, [roomId]);
       await client.query("COMMIT");
       return (result.rowCount ?? 0) > 0;
@@ -476,37 +502,90 @@ export class PostgresRoomStore implements IAppStore {
   }
 
   private async persist(room: RoomSnapshot): Promise<void> {
-    const { timeline, ...roomWithoutTimeline } = room;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await client.query(
-        `INSERT INTO rooms (id, task, status, phase, created_at, updated_at, agent_ids_json, snapshot_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO rooms (
+           id, task, name, subnest, status, phase, created_at, updated_at,
+           agent_ids_json, settings_json, final_output, connected_agents_json, search_jobs_json
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (id) DO UPDATE SET
            task = EXCLUDED.task,
+           name = EXCLUDED.name,
+           subnest = EXCLUDED.subnest,
            status = EXCLUDED.status,
            phase = EXCLUDED.phase,
            updated_at = EXCLUDED.updated_at,
            agent_ids_json = EXCLUDED.agent_ids_json,
-           snapshot_json = EXCLUDED.snapshot_json`,
+           settings_json = EXCLUDED.settings_json,
+           final_output = EXCLUDED.final_output,
+           connected_agents_json = EXCLUDED.connected_agents_json,
+           search_jobs_json = EXCLUDED.search_jobs_json`,
         [
           room.id,
           room.task,
+          room.name,
+          room.subnest,
           room.status,
           room.phase,
           room.createdAt,
           room.updatedAt,
           JSON.stringify(room.agentIds),
-          JSON.stringify(roomWithoutTimeline)
+          JSON.stringify(room.settings),
+          room.finalOutput || null,
+          JSON.stringify(room.connectedAgents),
+          JSON.stringify(room.searchJobs || [])
         ]
       );
-      for (const event of timeline) {
+      for (const event of room.timeline) {
         await client.query(
           `INSERT INTO room_timeline (id, room_id, timestamp, phase, envelope_json)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (id) DO NOTHING`,
           [event.id, room.id, event.timestamp, event.phase, JSON.stringify(event.envelope)]
+        );
+      }
+      for (const artifact of room.artifacts) {
+        await client.query(
+          `INSERT INTO room_artifacts (id, room_id, task_id, type, label, content, producer, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (id) DO UPDATE SET
+             label = EXCLUDED.label,
+             content = EXCLUDED.content`,
+          [artifact.id, room.id, artifact.taskId, artifact.type, artifact.label,
+           artifact.content, artifact.producer, artifact.timestamp]
+        );
+      }
+      for (const job of room.pythonJobs) {
+        await client.query(
+          `INSERT INTO room_python_jobs (
+             id, room_id, agent_id, agent_name, status, code, created_at,
+             started_at, finished_at, timeout_sec, exit_code, stdout, stderr, error, output_truncated
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             started_at = EXCLUDED.started_at,
+             finished_at = EXCLUDED.finished_at,
+             exit_code = EXCLUDED.exit_code,
+             stdout = EXCLUDED.stdout,
+             stderr = EXCLUDED.stderr,
+             error = EXCLUDED.error,
+             output_truncated = EXCLUDED.output_truncated`,
+          [
+            job.id, job.roomId, job.agentId, job.agentName, job.status, job.code,
+            job.createdAt,
+            job.startedAt || null,
+            job.finishedAt || null,
+            job.timeoutSec,
+            job.exitCode ?? null,
+            job.stdout || null,
+            job.stderr || null,
+            job.error || null,
+            job.outputTruncated || false
+          ]
         );
       }
       await client.query("COMMIT");
@@ -518,24 +597,73 @@ export class PostgresRoomStore implements IAppStore {
     }
   }
 
-  private parseSnapshot(raw: string): RoomSnapshot {
-    const room = JSON.parse(raw) as RoomSnapshot;
-    if (!room.name || room.name.trim().length === 0) room.name = `Room ${room.id.slice(0, 8)}`;
-    if (!room.subnest) room.subnest = "general";
-    if (!room.settings) room.settings = { pythonShellEnabled: false, isPublic: true };
-    if (typeof room.settings.pythonShellEnabled !== "boolean") room.settings.pythonShellEnabled = false;
-    if (typeof room.settings.isPublic !== "boolean") room.settings.isPublic = true;
-    if (typeof room.settings.webSearchEnabled !== "boolean") room.settings.webSearchEnabled = false;
-    if (!room.timeline) room.timeline = [];
-    if (!room.artifacts) room.artifacts = [];
-    if (!room.agentIds) room.agentIds = [];
-    if (!room.connectedAgents) room.connectedAgents = [];
-    if (!room.pythonJobs) room.pythonJobs = [];
-    return room;
+  private buildSnapshot(
+    row: RoomsRow,
+    timeline: RoomEvent[],
+    artifacts: Artifact[],
+    pythonJobs: PythonJob[]
+  ): RoomSnapshot {
+    const settings = (row.settings_json || {}) as { pythonShellEnabled?: boolean; webSearchEnabled?: boolean; isPublic?: boolean };
+    if (typeof settings.pythonShellEnabled !== "boolean") settings.pythonShellEnabled = false;
+    if (typeof settings.isPublic !== "boolean") settings.isPublic = true;
+    if (typeof settings.webSearchEnabled !== "boolean") settings.webSearchEnabled = false;
+    return {
+      id: row.id,
+      name: row.name || `Room ${row.id.slice(0, 8)}`,
+      task: row.task,
+      subnest: row.subnest || "general",
+      status: row.status as RoomStatus,
+      phase: row.phase as RoomPhase,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      agentIds: this.parseJsonArray(row.agent_ids_json),
+      settings: settings as RoomSnapshot["settings"],
+      finalOutput: row.final_output || undefined,
+      connectedAgents: Array.isArray(row.connected_agents_json) ? row.connected_agents_json : [],
+      searchJobs: Array.isArray(row.search_jobs_json) ? row.search_jobs_json : [],
+      timeline,
+      artifacts,
+      pythonJobs,
+      messageCount: row.message_count ?? timeline.length
+    };
   }
 
-  private parseEvent(row: { id: string; timestamp: Date; phase: string; envelope_json: import("../types/protocol").AgentEnvelope }): import("../types/protocol").RoomEvent {
-    const envelope = row.envelope_json as import("../types/protocol").AgentEnvelope;
+  private mapArtifactRow(row: ArtifactRow): Artifact {
+    return {
+      id: row.id,
+      taskId: row.task_id,
+      type: row.type as Artifact["type"],
+      label: row.label,
+      content: row.content,
+      producer: row.producer,
+      timestamp: row.timestamp instanceof Date ? row.timestamp.toISOString() : row.timestamp
+    };
+  }
+
+  private mapPythonJobRow(row: PythonJobRow): PythonJob {
+    const toIso = (v: Date | null): string | undefined =>
+      v instanceof Date ? v.toISOString() : (v || undefined);
+    return {
+      id: row.id,
+      roomId: row.room_id,
+      agentId: row.agent_id,
+      agentName: row.agent_name,
+      status: row.status as PythonJobStatus,
+      code: row.code,
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      startedAt: toIso(row.started_at),
+      finishedAt: toIso(row.finished_at),
+      timeoutSec: row.timeout_sec,
+      exitCode: row.exit_code ?? null,
+      stdout: row.stdout || undefined,
+      stderr: row.stderr || undefined,
+      error: row.error || undefined,
+      outputTruncated: row.output_truncated || false
+    };
+  }
+
+  private parseEvent(row: TimelineRow): RoomEvent {
+    const envelope = row.envelope_json as AgentEnvelope;
     if (envelope.scope !== "room" && envelope.scope !== "direct") {
       envelope.scope = envelope.to_agent === "room" ? "room" : "direct";
     }
@@ -545,7 +673,7 @@ export class PostgresRoomStore implements IAppStore {
     return {
       id: row.id,
       timestamp: row.timestamp instanceof Date ? row.timestamp.toISOString() : row.timestamp,
-      phase: row.phase as import("../types/protocol").RoomPhase,
+      phase: row.phase as RoomPhase,
       envelope
     };
   }
@@ -595,6 +723,59 @@ export class PostgresRoomStore implements IAppStore {
   async close(): Promise<void> {
     await this.pool.end();
   }
+}
+
+interface RoomsRow {
+  id: string;
+  task: string;
+  name: string;
+  subnest: string;
+  status: string;
+  phase: string;
+  created_at: string;
+  updated_at: string;
+  agent_ids_json: string;
+  settings_json: Record<string, unknown>;
+  final_output: string | null;
+  connected_agents_json: ConnectedAgent[];
+  search_jobs_json: WebSearchJob[];
+  message_count?: number;
+}
+
+interface TimelineRow {
+  id: string;
+  timestamp: Date;
+  phase: string;
+  envelope_json: AgentEnvelope;
+}
+
+interface ArtifactRow {
+  id: string;
+  room_id: string;
+  task_id: string;
+  type: string;
+  label: string;
+  content: string;
+  producer: string;
+  timestamp: Date;
+}
+
+interface PythonJobRow {
+  id: string;
+  room_id: string;
+  agent_id: string;
+  agent_name: string;
+  status: string;
+  code: string;
+  created_at: Date;
+  started_at: Date | null;
+  finished_at: Date | null;
+  timeout_sec: number;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  error: string | null;
+  output_truncated: boolean;
 }
 
 interface PlatformAgentRow {

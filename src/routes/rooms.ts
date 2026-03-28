@@ -46,12 +46,9 @@ export function createRoomsRouter(store: IAppStore): express.Router {
     const now = Date.now();
     for (const r of rooms) {
       for (const a of r.connectedAgents) agentNames.add(a.name.toLowerCase());
-      const msgs = r.timeline.filter(e => e.envelope.message_type === "chat");
-      totalMessages += msgs.length;
-      if (msgs.length > 0) {
-        const last = new Date(msgs[msgs.length - 1].timestamp).getTime();
-        if (now - last < 24 * 60 * 60 * 1000) activeRooms++;
-      }
+      const count = r.messageCount ?? r.timeline.length;
+      totalMessages += count;
+      if (count > 0 && now - new Date(r.updatedAt).getTime() < 24 * 60 * 60 * 1000) activeRooms++;
     }
     res.json({
       totalRooms: rooms.length,
@@ -65,7 +62,7 @@ export function createRoomsRouter(store: IAppStore): express.Router {
         .map(r => ({
           name: r.name,
           agents: r.connectedAgents.length,
-          messages: r.timeline.filter(e => e.envelope.message_type === "chat").length
+          messages: r.messageCount ?? r.timeline.length
         }))
     });
   });
@@ -86,7 +83,7 @@ export function createRoomsRouter(store: IAppStore): express.Router {
         subnest: r.subnest,
         task: r.task.slice(0, 200),
         agentCount: r.connectedAgents.length,
-        messageCount: r.timeline.length,
+        messageCount: r.messageCount ?? r.timeline.length,
         pythonEnabled: r.settings.pythonShellEnabled,
         webSearchEnabled: r.settings.webSearchEnabled,
         updatedAt: r.updatedAt,
@@ -116,7 +113,7 @@ export function createRoomsRouter(store: IAppStore): express.Router {
         task: s.room.task.slice(0, 200),
         relevance: s.score,
         agentCount: s.room.connectedAgents.length,
-        messageCount: s.room.timeline.length,
+        messageCount: s.room.messageCount ?? s.room.timeline.length,
         pythonEnabled: s.room.settings.pythonShellEnabled,
         webSearchEnabled: s.room.settings.webSearchEnabled,
         updatedAt: s.room.updatedAt,

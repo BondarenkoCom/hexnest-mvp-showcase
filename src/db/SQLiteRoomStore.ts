@@ -2,11 +2,20 @@ import fs from "fs";
 import path from "path";
 import { createHash, randomBytes } from "crypto";
 import {
+  AgentEnvelope,
+  Artifact,
+  ConnectedAgent,
   DirectoryAgent,
   PlatformAgent,
+  PythonJob,
+  PythonJobStatus,
   RegisterAgentInput,
+  RoomEvent,
+  RoomPhase,
   RoomSnapshot,
-  SharedLink
+  RoomStatus,
+  SharedLink,
+  WebSearchJob
 } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
@@ -14,10 +23,6 @@ import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
 export type { DirectoryAgent, SharedLink };
 
 const sqlite = require("node:sqlite");
-
-interface RoomRow {
-  snapshot_json: string;
-}
 
 interface SharedLinkRow {
   id: string;
@@ -54,6 +59,12 @@ export class SQLiteRoomStore implements IAppStore {
   private readonly deleteRoomStmt: any;
   private readonly deleteSharedLinksByRoomStmt: any;
   private readonly deleteSharedLinksByMessageStmt: any;
+  private readonly getArtifactsStmt: any;
+  private readonly upsertArtifactStmt: any;
+  private readonly deleteArtifactsByRoomStmt: any;
+  private readonly getPythonJobsStmt: any;
+  private readonly upsertPythonJobStmt: any;
+  private readonly deletePythonJobsByRoomStmt: any;
 
   constructor(dbPath: string) {
     const normalizedPath = path.resolve(dbPath);
@@ -67,12 +78,17 @@ export class SQLiteRoomStore implements IAppStore {
       CREATE TABLE IF NOT EXISTS rooms (
         id TEXT PRIMARY KEY,
         task TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        subnest TEXT NOT NULL DEFAULT 'general',
         status TEXT NOT NULL,
         phase TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         agent_ids_json TEXT NOT NULL,
-        snapshot_json TEXT NOT NULL
+        settings_json TEXT NOT NULL DEFAULT '{}',
+        final_output TEXT,
+        connected_agents_json TEXT NOT NULL DEFAULT '[]',
+        search_jobs_json TEXT NOT NULL DEFAULT '[]'
       );
       CREATE INDEX IF NOT EXISTS idx_rooms_updated_at ON rooms(updated_at DESC);
     `);
@@ -156,6 +172,41 @@ export class SQLiteRoomStore implements IAppStore {
       CREATE INDEX IF NOT EXISTS idx_room_timeline_room_ts ON room_timeline(room_id, timestamp);
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS room_artifacts (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        label TEXT NOT NULL,
+        content TEXT NOT NULL,
+        producer TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_room_artifacts_room_id ON room_artifacts(room_id);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS room_python_jobs (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        code TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        timeout_sec INTEGER NOT NULL DEFAULT 35,
+        exit_code INTEGER,
+        stdout TEXT,
+        stderr TEXT,
+        error TEXT,
+        output_truncated INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_room_python_jobs_room_id ON room_python_jobs(room_id);
+    `);
+
     // Migration: add category column if missing (existing DBs)
     try {
       this.db.exec(`ALTER TABLE agent_directory ADD COLUMN category TEXT NOT NULL DEFAULT 'utility'`);
@@ -164,46 +215,42 @@ export class SQLiteRoomStore implements IAppStore {
     }
 
     this.getRoomStmt = this.db.prepare(`
-      SELECT snapshot_json
+      SELECT id, task, name, subnest, status, phase, created_at, updated_at,
+             agent_ids_json, settings_json, final_output, connected_agents_json, search_jobs_json
       FROM rooms
       WHERE id = @id
       LIMIT 1
     `);
 
     this.listRoomsStmt = this.db.prepare(`
-      SELECT snapshot_json
-      FROM rooms
-      ORDER BY updated_at DESC
+      SELECT r.id, r.task, r.name, r.subnest, r.status, r.phase, r.created_at, r.updated_at,
+             r.agent_ids_json, r.settings_json, r.final_output, r.connected_agents_json, r.search_jobs_json,
+             (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id) AS message_count
+      FROM rooms r
+      ORDER BY r.updated_at DESC
     `);
 
     this.upsertRoomStmt = this.db.prepare(`
       INSERT INTO rooms (
-        id,
-        task,
-        status,
-        phase,
-        created_at,
-        updated_at,
-        agent_ids_json,
-        snapshot_json
+        id, task, name, subnest, status, phase, created_at, updated_at,
+        agent_ids_json, settings_json, final_output, connected_agents_json, search_jobs_json
       )
       VALUES (
-        @id,
-        @task,
-        @status,
-        @phase,
-        @createdAt,
-        @updatedAt,
-        @agentIdsJson,
-        @snapshotJson
+        @id, @task, @name, @subnest, @status, @phase, @createdAt, @updatedAt,
+        @agentIdsJson, @settingsJson, @finalOutput, @connectedAgentsJson, @searchJobsJson
       )
       ON CONFLICT(id) DO UPDATE SET
         task = excluded.task,
+        name = excluded.name,
+        subnest = excluded.subnest,
         status = excluded.status,
         phase = excluded.phase,
         updated_at = excluded.updated_at,
         agent_ids_json = excluded.agent_ids_json,
-        snapshot_json = excluded.snapshot_json
+        settings_json = excluded.settings_json,
+        final_output = excluded.final_output,
+        connected_agents_json = excluded.connected_agents_json,
+        search_jobs_json = excluded.search_jobs_json
     `);
 
     this.getTimelineStmt = this.db.prepare(`
@@ -225,6 +272,57 @@ export class SQLiteRoomStore implements IAppStore {
 
     this.deleteTimelineByEventStmt = this.db.prepare(`
       DELETE FROM room_timeline WHERE room_id = @roomId AND id = @id
+    `);
+
+    this.getArtifactsStmt = this.db.prepare(`
+      SELECT id, room_id, task_id, type, label, content, producer, timestamp
+      FROM room_artifacts
+      WHERE room_id = @roomId
+      ORDER BY timestamp ASC
+    `);
+
+    this.upsertArtifactStmt = this.db.prepare(`
+      INSERT INTO room_artifacts (id, room_id, task_id, type, label, content, producer, timestamp)
+      VALUES (@id, @roomId, @taskId, @type, @label, @content, @producer, @timestamp)
+      ON CONFLICT(id) DO UPDATE SET
+        label = excluded.label,
+        content = excluded.content
+    `);
+
+    this.deleteArtifactsByRoomStmt = this.db.prepare(`
+      DELETE FROM room_artifacts WHERE room_id = @roomId
+    `);
+
+    this.getPythonJobsStmt = this.db.prepare(`
+      SELECT id, room_id, agent_id, agent_name, status, code, created_at,
+             started_at, finished_at, timeout_sec, exit_code, stdout, stderr, error, output_truncated
+      FROM room_python_jobs
+      WHERE room_id = @roomId
+      ORDER BY created_at ASC
+    `);
+
+    this.upsertPythonJobStmt = this.db.prepare(`
+      INSERT INTO room_python_jobs (
+        id, room_id, agent_id, agent_name, status, code, created_at,
+        started_at, finished_at, timeout_sec, exit_code, stdout, stderr, error, output_truncated
+      )
+      VALUES (
+        @id, @roomId, @agentId, @agentName, @status, @code, @createdAt,
+        @startedAt, @finishedAt, @timeoutSec, @exitCode, @stdout, @stderr, @error, @outputTruncated
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        started_at = excluded.started_at,
+        finished_at = excluded.finished_at,
+        exit_code = excluded.exit_code,
+        stdout = excluded.stdout,
+        stderr = excluded.stderr,
+        error = excluded.error,
+        output_truncated = excluded.output_truncated
+    `);
+
+    this.deletePythonJobsByRoomStmt = this.db.prepare(`
+      DELETE FROM room_python_jobs WHERE room_id = @roomId
     `);
 
     this.insertAgentDirStmt = this.db.prepare(`
@@ -318,21 +416,22 @@ export class SQLiteRoomStore implements IAppStore {
   }
 
   public async getRoom(roomId: string): Promise<RoomSnapshot | undefined> {
-    const row = this.getRoomStmt.get({ id: roomId }) as RoomRow | undefined;
+    const row = this.getRoomStmt.get({ id: roomId }) as RoomsRow | undefined;
     if (!row) return Promise.resolve(undefined);
-    const room = this.parseSnapshot(row.snapshot_json);
-    const events = this.getTimelineStmt.all({ roomId }) as Array<{ id: string; timestamp: string; phase: string; envelope_json: string }>;
-    room.timeline = events.map(e => this.parseEvent(e));
-    return Promise.resolve(room);
+    const timelineRows = this.getTimelineStmt.all({ roomId }) as TimelineSqlRow[];
+    const artifactRows = this.getArtifactsStmt.all({ roomId }) as ArtifactSqlRow[];
+    const jobRows = this.getPythonJobsStmt.all({ roomId }) as PythonJobSqlRow[];
+    return Promise.resolve(this.buildSnapshot(
+      row,
+      timelineRows.map(r => this.parseEvent(r)),
+      artifactRows.map(r => this.mapArtifactRow(r)),
+      jobRows.map(r => this.mapPythonJobRow(r))
+    ));
   }
 
   public async listRooms(): Promise<RoomSnapshot[]> {
-    const rows = this.listRoomsStmt.all() as RoomRow[];
-    return Promise.resolve(rows.map((row) => {
-      const room = this.parseSnapshot(row.snapshot_json);
-      room.timeline = [];
-      return room;
-    }));
+    const rows = this.listRoomsStmt.all() as RoomsRow[];
+    return Promise.resolve(rows.map(row => this.buildSnapshot(row, [], [], [])));
   }
 
   public async saveRoom(room: RoomSnapshot): Promise<RoomSnapshot> {
@@ -624,6 +723,8 @@ export class SQLiteRoomStore implements IAppStore {
 
   public async deleteRoom(roomId: string): Promise<boolean> {
     this.deleteTimelineByRoomStmt.run({ roomId });
+    this.deleteArtifactsByRoomStmt.run({ roomId });
+    this.deletePythonJobsByRoomStmt.run({ roomId });
     this.deleteSharedLinksByRoomStmt.run({ roomId });
     const result = this.deleteRoomStmt.run({ id: roomId }) as { changes?: number } | undefined;
     return Promise.resolve(Number(result?.changes || 0) > 0);
@@ -645,18 +746,22 @@ export class SQLiteRoomStore implements IAppStore {
   }
 
   private persist(room: RoomSnapshot): void {
-    const { timeline, ...roomWithoutTimeline } = room;
     this.upsertRoomStmt.run({
       id: room.id,
       task: room.task,
+      name: room.name,
+      subnest: room.subnest,
       status: room.status,
       phase: room.phase,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
       agentIdsJson: JSON.stringify(room.agentIds),
-      snapshotJson: JSON.stringify(roomWithoutTimeline)
+      settingsJson: JSON.stringify(room.settings),
+      finalOutput: room.finalOutput || null,
+      connectedAgentsJson: JSON.stringify(room.connectedAgents),
+      searchJobsJson: JSON.stringify(room.searchJobs || [])
     });
-    for (const event of timeline) {
+    for (const event of room.timeline) {
       this.insertTimelineEventStmt.run({
         id: event.id,
         roomId: room.id,
@@ -665,26 +770,105 @@ export class SQLiteRoomStore implements IAppStore {
         envelopeJson: JSON.stringify(event.envelope)
       });
     }
+    for (const artifact of room.artifacts) {
+      this.upsertArtifactStmt.run({
+        id: artifact.id,
+        roomId: room.id,
+        taskId: artifact.taskId,
+        type: artifact.type,
+        label: artifact.label,
+        content: artifact.content,
+        producer: artifact.producer,
+        timestamp: artifact.timestamp
+      });
+    }
+    for (const job of room.pythonJobs) {
+      this.upsertPythonJobStmt.run({
+        id: job.id,
+        roomId: job.roomId,
+        agentId: job.agentId,
+        agentName: job.agentName,
+        status: job.status,
+        code: job.code,
+        createdAt: job.createdAt,
+        startedAt: job.startedAt || null,
+        finishedAt: job.finishedAt || null,
+        timeoutSec: job.timeoutSec,
+        exitCode: job.exitCode ?? null,
+        stdout: job.stdout || null,
+        stderr: job.stderr || null,
+        error: job.error || null,
+        outputTruncated: job.outputTruncated ? 1 : 0
+      });
+    }
   }
 
-  private parseSnapshot(raw: string): RoomSnapshot {
-    const room = JSON.parse(raw) as RoomSnapshot;
-    if (!room.name || room.name.trim().length === 0) room.name = `Room ${room.id.slice(0, 8)}`;
-    if (!room.subnest) room.subnest = "general";
-    if (!room.settings) room.settings = { pythonShellEnabled: false, isPublic: true };
-    if (typeof room.settings.pythonShellEnabled !== "boolean") room.settings.pythonShellEnabled = false;
-    if (typeof room.settings.isPublic !== "boolean") room.settings.isPublic = true;
-    if (typeof room.settings.webSearchEnabled !== "boolean") room.settings.webSearchEnabled = false;
-    if (!room.timeline) room.timeline = [];
-    if (!room.artifacts) room.artifacts = [];
-    if (!room.agentIds) room.agentIds = [];
-    if (!room.connectedAgents) room.connectedAgents = [];
-    if (!room.pythonJobs) room.pythonJobs = [];
-    return room;
+  private buildSnapshot(
+    row: RoomsRow,
+    timeline: RoomEvent[],
+    artifacts: Artifact[],
+    pythonJobs: PythonJob[]
+  ): RoomSnapshot {
+    const settings = this.parseJsonObject<RoomSnapshot["settings"]>(row.settings_json) ||
+      { pythonShellEnabled: false, isPublic: true, webSearchEnabled: false };
+    if (typeof settings.pythonShellEnabled !== "boolean") settings.pythonShellEnabled = false;
+    if (typeof settings.isPublic !== "boolean") settings.isPublic = true;
+    if (typeof settings.webSearchEnabled !== "boolean") settings.webSearchEnabled = false;
+    return {
+      id: row.id,
+      name: row.name || `Room ${row.id.slice(0, 8)}`,
+      task: row.task,
+      subnest: row.subnest || "general",
+      status: row.status as RoomStatus,
+      phase: row.phase as RoomPhase,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      agentIds: this.parseStringArray(row.agent_ids_json),
+      settings,
+      finalOutput: row.final_output || undefined,
+      connectedAgents: this.parseJsonArray<ConnectedAgent>(row.connected_agents_json),
+      searchJobs: this.parseJsonArray<WebSearchJob>(row.search_jobs_json),
+      timeline,
+      artifacts,
+      pythonJobs,
+      messageCount: row.message_count != null ? Number(row.message_count) : timeline.length
+    };
   }
 
-  private parseEvent(row: { id: string; timestamp: string; phase: string; envelope_json: string }): import("../types/protocol").RoomEvent {
-    const envelope = JSON.parse(row.envelope_json) as import("../types/protocol").AgentEnvelope;
+  private mapArtifactRow(row: ArtifactSqlRow): Artifact {
+    return {
+      id: row.id,
+      taskId: row.task_id,
+      type: row.type as Artifact["type"],
+      label: row.label,
+      content: row.content,
+      producer: row.producer,
+      timestamp: row.timestamp
+    };
+  }
+
+  private mapPythonJobRow(row: PythonJobSqlRow): PythonJob {
+    return {
+      id: row.id,
+      roomId: row.room_id,
+      agentId: row.agent_id,
+      agentName: row.agent_name,
+      status: row.status as PythonJobStatus,
+      code: row.code,
+      createdAt: row.created_at,
+      startedAt: row.started_at || undefined,
+      finishedAt: row.finished_at || undefined,
+      timeoutSec: row.timeout_sec,
+      exitCode: row.exit_code ?? null,
+      stdout: row.stdout || undefined,
+      stderr: row.stderr || undefined,
+      error: row.error || undefined,
+      outputTruncated: Boolean(row.output_truncated)
+    };
+  }
+
+  private parseEvent(row: TimelineSqlRow): RoomEvent {
+    const envelope = JSON.parse(row.envelope_json) as AgentEnvelope;
     if (envelope.scope !== "room" && envelope.scope !== "direct") {
       envelope.scope = envelope.to_agent === "room" ? "room" : "direct";
     }
@@ -694,7 +878,7 @@ export class SQLiteRoomStore implements IAppStore {
     return {
       id: row.id,
       timestamp: row.timestamp,
-      phase: row.phase as import("../types/protocol").RoomPhase,
+      phase: row.phase as RoomPhase,
       envelope
     };
   }
@@ -715,6 +899,25 @@ export class SQLiteRoomStore implements IAppStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
+  }
+
+  private parseJsonArray<T>(raw: string | null): T[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private parseJsonObject<T>(raw: string | null): T | null {
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
   }
 
   private parseStringArray(raw: string): string[] {
@@ -761,6 +964,59 @@ export class SQLiteRoomStore implements IAppStore {
       createdAt: row.created_at
     };
   }
+}
+
+interface RoomsRow {
+  id: string;
+  task: string;
+  name: string;
+  subnest: string;
+  status: string;
+  phase: string;
+  created_at: string;
+  updated_at: string;
+  agent_ids_json: string;
+  settings_json: string;
+  final_output: string | null;
+  connected_agents_json: string;
+  search_jobs_json: string;
+  message_count?: number;
+}
+
+interface TimelineSqlRow {
+  id: string;
+  timestamp: string;
+  phase: string;
+  envelope_json: string;
+}
+
+interface ArtifactSqlRow {
+  id: string;
+  room_id: string;
+  task_id: string;
+  type: string;
+  label: string;
+  content: string;
+  producer: string;
+  timestamp: string;
+}
+
+interface PythonJobSqlRow {
+  id: string;
+  room_id: string;
+  agent_id: string;
+  agent_name: string;
+  status: string;
+  code: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  timeout_sec: number;
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  error: string | null;
+  output_truncated: number;
 }
 
 interface PlatformAgentSqlRow {
