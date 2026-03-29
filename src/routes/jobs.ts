@@ -6,18 +6,22 @@ import {
   SubmitPythonJobInput
 } from "../tools/PythonJobManager";
 import { WebSearchManager, WebSearchJobUpdate } from "../tools/WebSearchManager";
-import { ConnectedAgent, RoomSnapshot } from "../types/protocol";
+import { Artifact, ConnectedAgent, RoomSnapshot } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
+import { getCanonicalPublicBaseUrl } from "../utils/html";
 import { normalizeText } from "../utils/normalize";
 import { newSystemEvent } from "../utils/room-builders";
+import { WebhookPublisher } from "../webhooks/WebhookPublisher";
 
 export function createPythonJobUpdateHandler(
-  store: IAppStore
+  store: IAppStore,
+  webhooks?: WebhookPublisher
 ): (update: PythonJobUpdate) => void {
   return function onPythonJobUpdate(update: PythonJobUpdate): void {
     void (async () => {
       const room = await store.getRoom(update.job.roomId);
       if (!room) return;
+      let createdArtifact: Artifact | null = null;
 
       upsertPythonJob(room, update.job);
 
@@ -37,7 +41,7 @@ export function createPythonJobUpdateHandler(
             `${update.job.agentName} finished Python job ${update.job.id.slice(0, 8)} with status ${update.job.status}`)
         );
 
-        room.artifacts.push({
+        const artifact: Artifact = {
           id: newId(),
           taskId: room.id,
           type: "note",
@@ -57,22 +61,65 @@ export function createPythonJobUpdateHandler(
           ]
             .filter(Boolean)
             .join("\n")
-        });
+        };
+        room.artifacts.push(artifact);
+        createdArtifact = artifact;
       }
 
       room.status = "open";
       await store.saveRoom(room);
+
+      if (update.kind === "finished") {
+        const baseUrl = getCanonicalPublicBaseUrl();
+        if (createdArtifact) {
+          webhooks?.publish(
+            "room.artifact_created",
+            {
+              roomId: room.id,
+              roomName: room.name,
+              artifactId: createdArtifact.id,
+              artifactType: createdArtifact.type,
+              label: createdArtifact.label,
+              producer: createdArtifact.producer
+            },
+            {
+              room: `${baseUrl}/r/${room.id}`,
+              artifactsApi: `${baseUrl}/api/rooms/${room.id}/artifacts`
+            }
+          );
+        }
+        webhooks?.publish(
+          "python_job.finished",
+          {
+            roomId: room.id,
+            roomName: room.name,
+            jobId: update.job.id,
+            status: update.job.status,
+            agentId: update.job.agentId,
+            agentName: update.job.agentName,
+            timeoutSec: update.job.timeoutSec,
+            exitCode: update.job.exitCode ?? null,
+            error: update.job.error || ""
+          },
+          {
+            room: `${baseUrl}/r/${room.id}`,
+            jobApi: `${baseUrl}/api/rooms/${room.id}/python-jobs/${update.job.id}`
+          }
+        );
+      }
     })().catch(err => console.error("python job update error:", err));
   };
 }
 
 export function createWebSearchJobUpdateHandler(
-  store: IAppStore
+  store: IAppStore,
+  webhooks?: WebhookPublisher
 ): (update: WebSearchJobUpdate) => void {
   return function onWebSearchJobUpdate(update: WebSearchJobUpdate): void {
     void (async () => {
       const room = await store.getRoom(update.job.roomId);
       if (!room) return;
+      let createdArtifact: Artifact | null = null;
 
       if (!room.searchJobs) room.searchJobs = [];
       const idx = room.searchJobs.findIndex((j) => j.id === update.job.id);
@@ -100,7 +147,7 @@ export function createWebSearchJobUpdateHandler(
             .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
             .join("\n\n");
 
-          room.artifacts.push({
+          const artifact: Artifact = {
             id: newId(),
             taskId: room.id,
             type: "note",
@@ -108,12 +155,53 @@ export function createWebSearchJobUpdateHandler(
             producer: update.job.agentName,
             timestamp: nowIso(),
             content: `Query: ${update.job.query}\n\n${content}`
-          });
+          };
+          room.artifacts.push(artifact);
+          createdArtifact = artifact;
         }
       }
 
       room.status = "open";
       await store.saveRoom(room);
+
+      if (update.kind === "finished") {
+        const baseUrl = getCanonicalPublicBaseUrl();
+        if (createdArtifact) {
+          webhooks?.publish(
+            "room.artifact_created",
+            {
+              roomId: room.id,
+              roomName: room.name,
+              artifactId: createdArtifact.id,
+              artifactType: createdArtifact.type,
+              label: createdArtifact.label,
+              producer: createdArtifact.producer
+            },
+            {
+              room: `${baseUrl}/r/${room.id}`,
+              artifactsApi: `${baseUrl}/api/rooms/${room.id}/artifacts`
+            }
+          );
+        }
+        webhooks?.publish(
+          "search_job.finished",
+          {
+            roomId: room.id,
+            roomName: room.name,
+            jobId: update.job.id,
+            status: update.job.status,
+            query: update.job.query,
+            agentId: update.job.agentId,
+            agentName: update.job.agentName,
+            resultsCount: Array.isArray(update.job.results) ? update.job.results.length : 0,
+            error: update.job.error || ""
+          },
+          {
+            room: `${baseUrl}/r/${room.id}`,
+            jobApi: `${baseUrl}/api/rooms/${room.id}/search-jobs/${update.job.id}`
+          }
+        );
+      }
     })().catch(err => console.error("web search job update error:", err));
   };
 }

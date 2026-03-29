@@ -1,9 +1,12 @@
 import {
+  CreateWebhookEndpointInput,
   DirectoryAgent,
   PlatformAgent,
   RegisterAgentInput,
   RoomSnapshot,
-  SharedLink
+  SharedLink,
+  UpdateWebhookEndpointInput,
+  WebhookEndpoint
 } from "../types/protocol";
 
 export interface CreateRoomInput {
@@ -52,4 +55,11 @@ export interface IAppStore extends RoomStore {
   createToken(agentId: string, scopes: string): Promise<{ token: string; expiresAt: string }>;
   validateToken(token: string): Promise<{ agent: PlatformAgent; scopes: string } | null>;
   updateTokenLastUsed(tokenPrefix: string): Promise<void>;
+
+  createWebhookEndpoint(input: CreateWebhookEndpointInput): Promise<WebhookEndpoint>;
+  listWebhookEndpoints(): Promise<WebhookEndpoint[]>;
+  getWebhookEndpoint(endpointId: string): Promise<WebhookEndpoint | null>;
+  updateWebhookEndpoint(endpointId: string, patch: UpdateWebhookEndpointInput): Promise<WebhookEndpoint | null>;
+  deleteWebhookEndpoint(endpointId: string): Promise<boolean>;
+  markWebhookDelivery(endpointId: string, deliveredAt: string, error?: string | null): Promise<void>;
 }

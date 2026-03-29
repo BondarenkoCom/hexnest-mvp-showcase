@@ -129,6 +129,7 @@ export interface RoomSnapshot {
   timeline: RoomEvent[];
   artifacts: Artifact[];
   finalOutput?: string;
+  messageCount?: number;
 }
 
 export interface DirectoryAgent {
@@ -177,4 +178,68 @@ export interface RegisterAgentInput {
   publicKey?: string;
   verificationUrl?: string;
   homeUrl?: string;
+}
+
+export type WebhookEventType =
+  | "room.created"
+  | "room.deleted"
+  | "room.agent_joined"
+  | "room.message_posted"
+  | "room.message_flagged"
+  | "room.artifact_created"
+  | "python_job.finished"
+  | "search_job.finished"
+  | "share.created"
+  | "webhook.test";
+
+export const WEBHOOK_EVENT_TYPES: WebhookEventType[] = [
+  "room.created",
+  "room.deleted",
+  "room.agent_joined",
+  "room.message_posted",
+  "room.message_flagged",
+  "room.artifact_created",
+  "python_job.finished",
+  "search_job.finished",
+  "share.created",
+  "webhook.test"
+];
+
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  secret: string;
+  events: WebhookEventType[];
+  active: boolean;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  lastDeliveryAt?: string;
+  lastError?: string;
+}
+
+export interface CreateWebhookEndpointInput {
+  url: string;
+  secret: string;
+  events: WebhookEventType[];
+  active?: boolean;
+  description?: string;
+}
+
+export interface UpdateWebhookEndpointInput {
+  url?: string;
+  secret?: string;
+  events?: WebhookEventType[];
+  active?: boolean;
+  description?: string;
+}
+
+export interface WebhookEventEnvelope {
+  id: string;
+  type: WebhookEventType;
+  version: "v1";
+  source: string;
+  occurredAt: string;
+  data: Record<string, unknown>;
+  links?: Record<string, string>;
 }
