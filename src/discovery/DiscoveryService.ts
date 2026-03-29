@@ -3,6 +3,7 @@ import { newId, nowIso } from "../utils/ids";
 import {
   DiscoveryCandidate,
   DiscoveryCandidateStatus,
+  DiscoveryHandshakeRunResult,
   DiscoveryJoinability,
   DiscoveryLogEntry,
   DiscoveryProtocol,
@@ -16,6 +17,8 @@ interface DiscoveryServiceOptions {
   a2aSeeds: string[];
   maxLogs: number;
   contactThreshold: number;
+  handshakeDelayMs: number;
+  handshakeBatchLimit: number;
 }
 
 interface McpServerListResponse {
@@ -51,7 +54,9 @@ const DEFAULT_OPTIONS: DiscoveryServiceOptions = {
   fetchTimeoutMs: Math.max(1000, Number(process.env.HEXNEST_DISCOVERY_TIMEOUT_MS || 8000)),
   a2aSeeds: parseSeeds(process.env.HEXNEST_DISCOVERY_A2A_SEEDS || ""),
   maxLogs: Math.max(100, Number(process.env.HEXNEST_DISCOVERY_MAX_LOGS || 600)),
-  contactThreshold: Math.max(1, Math.min(100, Number(process.env.HEXNEST_DISCOVERY_CONTACT_THRESHOLD || 70)))
+  contactThreshold: Math.max(1, Math.min(100, Number(process.env.HEXNEST_DISCOVERY_CONTACT_THRESHOLD || 70))),
+  handshakeDelayMs: Math.max(60_000, Number(process.env.HEXNEST_DISCOVERY_HANDSHAKE_DELAY_MS || 24 * 60 * 60 * 1000)),
+  handshakeBatchLimit: Math.max(1, Number(process.env.HEXNEST_DISCOVERY_HANDSHAKE_BATCH || 20))
 };
 
 type DiscoveryStore = Pick<IAppStore, "listDirectoryAgents">;
@@ -61,7 +66,9 @@ export class DiscoveryService {
   private readonly candidates = new Map<string, DiscoveryCandidate>();
   private readonly logs: DiscoveryLogEntry[] = [];
   private running = false;
+  private handshakeRunning = false;
   private lastRun: DiscoveryRunResult | null = null;
+  private lastHandshakeRun: DiscoveryHandshakeRunResult | null = null;
 
   constructor(
     private readonly store: DiscoveryStore,
@@ -79,7 +86,9 @@ export class DiscoveryService {
       contactThreshold: Math.max(
         1,
         Math.min(100, Number(options.contactThreshold || DEFAULT_OPTIONS.contactThreshold))
-      )
+      ),
+      handshakeDelayMs: Math.max(60_000, Number(options.handshakeDelayMs || DEFAULT_OPTIONS.handshakeDelayMs)),
+      handshakeBatchLimit: Math.max(1, Number(options.handshakeBatchLimit || DEFAULT_OPTIONS.handshakeBatchLimit))
     };
   }
 
@@ -100,11 +109,25 @@ export class DiscoveryService {
       .map((candidate) => ({ ...candidate }));
   }
 
-  public getStatus(): { running: boolean; lastRun: DiscoveryRunResult | null; totalCandidates: number } {
+  public getStatus(): {
+    running: boolean;
+    handshakeRunning: boolean;
+    lastRun: DiscoveryRunResult | null;
+    lastHandshakeRun: DiscoveryHandshakeRunResult | null;
+    totalCandidates: number;
+    queuedForHandshake: number;
+  } {
+    const nowMs = Date.now();
+    const queuedForHandshake = Array.from(this.candidates.values()).filter((candidate) =>
+      this.isQueuedForHandshake(candidate, nowMs)
+    ).length;
     return {
       running: this.running,
+      handshakeRunning: this.handshakeRunning,
       lastRun: this.lastRun ? { ...this.lastRun } : null,
-      totalCandidates: this.candidates.size
+      lastHandshakeRun: this.lastHandshakeRun ? { ...this.lastHandshakeRun } : null,
+      totalCandidates: this.candidates.size,
+      queuedForHandshake
     };
   }
 
@@ -120,6 +143,15 @@ export class DiscoveryService {
     if (!found) return null;
     found.status = status;
     found.lastSeenAt = nowIso();
+    if (status === "rejected" || status === "connected") {
+      found.nextHandshakeAt = undefined;
+    }
+    if (
+      (status === "approved" || status === "qualified") &&
+      found.trustScore >= this.options.contactThreshold
+    ) {
+      this.queueCandidateForHandshake(found, "manual");
+    }
     this.log("candidate.status_changed", "info", `${found.title} status -> ${status}`, found.id, "manual");
     return { ...found };
   }
@@ -169,6 +201,159 @@ export class DiscoveryService {
       `Discovery scan finished: scanned=${scanned}, upserted=${upserted}, errors=${errors.length}`
     );
     return { ...result, errors: [...result.errors] };
+  }
+
+  public async runHandshakeQueue(): Promise<DiscoveryHandshakeRunResult> {
+    if (this.handshakeRunning) {
+      throw new Error("discovery handshake queue already running");
+    }
+    this.handshakeRunning = true;
+    const startedAt = nowIso();
+    const nowMs = Date.now();
+    this.log("handshake.queue.started", "info", "Discovery handshake queue started");
+
+    let considered = 0;
+    let attempted = 0;
+    let connected = 0;
+    let failed = 0;
+
+    try {
+      const due = Array.from(this.candidates.values())
+        .filter((candidate) => this.isQueuedForHandshake(candidate, nowMs))
+        .sort((a, b) => {
+          const aDue = Date.parse(String(a.nextHandshakeAt || ""));
+          const bDue = Date.parse(String(b.nextHandshakeAt || ""));
+          return aDue - bDue;
+        })
+        .slice(0, this.options.handshakeBatchLimit);
+
+      considered = due.length;
+      for (const candidate of due) {
+        attempted += 1;
+        const attemptAt = nowIso();
+        candidate.lastHandshakeAt = attemptAt;
+        candidate.handshakeAttempts = Number(candidate.handshakeAttempts || 0) + 1;
+
+        this.log(
+          "handshake.sent",
+          "info",
+          `Handshake probe sent: ${candidate.title}`,
+          candidate.id,
+          "handshake_queue"
+        );
+
+        const probe = await this.probeHandshake(candidate);
+        if (probe.ok) {
+          connected += 1;
+          candidate.lastHandshakeStatus = "ok";
+          candidate.lastHandshakeCode = probe.status;
+          candidate.lastHandshakeError = undefined;
+          candidate.status = "connected";
+          candidate.nextHandshakeAt = undefined;
+          candidate.lastSeenAt = nowIso();
+          this.log(
+            "handshake.ok",
+            "info",
+            `Handshake responded (${probe.status ?? "ok"}): ${candidate.title}`,
+            candidate.id,
+            "handshake_queue"
+          );
+          continue;
+        }
+
+        failed += 1;
+        candidate.lastHandshakeStatus = "failed";
+        candidate.lastHandshakeCode = probe.status;
+        candidate.lastHandshakeError = probe.error || `http_${probe.status ?? "unknown"}`;
+        candidate.nextHandshakeAt = this.toFutureIso(nowMs, this.options.handshakeDelayMs);
+        this.log(
+          "handshake.failed",
+          "warn",
+          `Handshake failed: ${candidate.title} (${candidate.lastHandshakeError})`,
+          candidate.id,
+          "handshake_queue"
+        );
+      }
+    } finally {
+      this.handshakeRunning = false;
+    }
+
+    const result: DiscoveryHandshakeRunResult = {
+      startedAt,
+      finishedAt: nowIso(),
+      considered,
+      attempted,
+      connected,
+      failed
+    };
+    this.lastHandshakeRun = result;
+    this.log(
+      "handshake.queue.finished",
+      failed > 0 ? "warn" : "info",
+      `Handshake queue finished: considered=${considered}, attempted=${attempted}, connected=${connected}, failed=${failed}`
+    );
+    return { ...result };
+  }
+
+  private isQueuedForHandshake(candidate: DiscoveryCandidate, nowMs: number): boolean {
+    if (candidate.joinability !== "connectable") return false;
+    if (candidate.status === "rejected" || candidate.status === "connected") return false;
+    if (candidate.trustScore < this.options.contactThreshold) return false;
+    if (!candidate.nextHandshakeAt) return false;
+    const dueMs = Date.parse(candidate.nextHandshakeAt);
+    return Number.isFinite(dueMs) && dueMs <= nowMs;
+  }
+
+  private queueCandidateForHandshake(candidate: DiscoveryCandidate, sourceKind: string): void {
+    if (candidate.joinability !== "connectable") return;
+    if (candidate.status === "rejected" || candidate.status === "connected") return;
+    const nowMs = Date.now();
+    const dueAt = this.toFutureIso(nowMs, this.options.handshakeDelayMs);
+    const hadQueue = Boolean(candidate.nextHandshakeAt);
+    candidate.nextHandshakeAt = dueAt;
+    candidate.lastHandshakeStatus = "queued";
+    candidate.lastHandshakeError = undefined;
+    if (!hadQueue) {
+      this.log(
+        "candidate.contact_queued",
+        "info",
+        `Candidate queued for handshake in 24h: ${candidate.title} (score ${candidate.trustScore})`,
+        candidate.id,
+        sourceKind
+      );
+    }
+  }
+
+  private async probeHandshake(candidate: DiscoveryCandidate): Promise<{ ok: boolean; status?: number; error?: string }> {
+    const endpoint = String(candidate.endpointUrl || "").trim();
+    if (!endpoint) {
+      return { ok: false, error: "missing_endpoint" };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.options.fetchTimeoutMs);
+    try {
+      const response = await this.fetchImpl(endpoint, {
+        method: "OPTIONS",
+        headers: {
+          accept: "application/json"
+        },
+        signal: controller.signal
+      });
+      const status = Number(response.status || 0);
+      if (status >= 200 && status < 500) {
+        return { ok: true, status };
+      }
+      return { ok: false, status, error: `http_${status}` };
+    } catch (error) {
+      return { ok: false, error: toErrorMessage(error) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private toFutureIso(baseMs: number, delayMs: number): string {
+    return new Date(baseMs + Math.max(60_000, delayMs)).toISOString();
   }
 
   private async scanMcpRegistry(): Promise<{ scanned: number; upserted: number }> {
@@ -322,18 +507,18 @@ export class DiscoveryService {
       status: existing?.status || "new",
       sourceKinds: mergedSourceKinds,
       firstSeenAt: existing?.firstSeenAt || now,
-      lastSeenAt: now
+      lastSeenAt: now,
+      nextHandshakeAt: existing?.nextHandshakeAt,
+      lastHandshakeAt: existing?.lastHandshakeAt,
+      handshakeAttempts: Number(existing?.handshakeAttempts || 0),
+      lastHandshakeStatus: existing?.lastHandshakeStatus,
+      lastHandshakeCode: existing?.lastHandshakeCode,
+      lastHandshakeError: existing?.lastHandshakeError
     };
     candidate.trustScore = scoreCandidate(candidate);
     if (candidate.trustScore >= this.options.contactThreshold && candidate.status === "new") {
       candidate.status = "qualified";
-      this.log(
-        "candidate.contact_queued",
-        "info",
-        `Candidate queued for outreach: ${candidate.title} (score ${candidate.trustScore})`,
-        candidate.id,
-        input.sourceKind
-      );
+      this.queueCandidateForHandshake(candidate, input.sourceKind);
     }
     this.candidates.set(candidate.id, candidate);
     return candidate;

@@ -46,6 +46,12 @@ const discoveryScanIntervalMs = Math.max(
   Number(process.env.HEXNEST_DISCOVERY_SCAN_INTERVAL_MS || 6 * 60 * 60 * 1000)
 );
 const discoveryScanOnStart = process.env.HEXNEST_DISCOVERY_SCAN_ON_START !== "false";
+const discoveryHandshakeEnabled = process.env.HEXNEST_DISCOVERY_HANDSHAKE_ENABLED !== "false";
+const discoveryHandshakeIntervalMs = Math.max(
+  60_000,
+  Number(process.env.HEXNEST_DISCOVERY_HANDSHAKE_INTERVAL_MS || 60 * 60 * 1000)
+);
+const discoveryHandshakeOnStart = process.env.HEXNEST_DISCOVERY_HANDSHAKE_ON_START !== "false";
 
 if (!databaseUrl) {
   console.error("DATABASE_URL env var is required");
@@ -113,6 +119,7 @@ async function main(): Promise<void> {
   await seedDirectoryAgents(store);
   let roomCleanupRunning = false;
   let discoveryScanRunning = false;
+  let discoveryHandshakeRunning = false;
   const runRoomCleanup = async (): Promise<void> => {
     if (roomInactivityDeleteHours <= 0 || roomCleanupRunning) {
       return;
@@ -150,6 +157,24 @@ async function main(): Promise<void> {
       discoveryScanRunning = false;
     }
   };
+  const runDiscoveryHandshake = async (): Promise<void> => {
+    if (!discoveryHandshakeEnabled || discoveryHandshakeRunning) {
+      return;
+    }
+    discoveryHandshakeRunning = true;
+    try {
+      const result = await discovery.runHandshakeQueue();
+      if (result.attempted > 0 || result.failed > 0) {
+        console.log(
+          `[discovery-handshake] considered=${result.considered} attempted=${result.attempted} connected=${result.connected} failed=${result.failed}`
+        );
+      }
+    } catch (error) {
+      console.error("[discovery-handshake] queue failed:", error);
+    } finally {
+      discoveryHandshakeRunning = false;
+    }
+  };
   app.listen(port, () => {
     console.log(`hexnest-mvp listening on :${port}`);
     console.log(`postgres: ${databaseUrl.replace(/:\/\/[^@]+@/, "://<credentials>@")}`);
@@ -177,6 +202,22 @@ async function main(): Promise<void> {
       `[discovery] enabled: scan every ${Math.round(discoveryScanIntervalMs / 1000)}s` +
       `${discoveryScanOnStart ? " (startup scan enabled)" : " (startup scan disabled)"}`
     );
+
+    if (discoveryHandshakeEnabled) {
+      const handshakeInterval = setInterval(() => {
+        void runDiscoveryHandshake();
+      }, discoveryHandshakeIntervalMs);
+      handshakeInterval.unref();
+      if (discoveryHandshakeOnStart) {
+        void runDiscoveryHandshake();
+      }
+      console.log(
+        `[discovery-handshake] enabled: run every ${Math.round(discoveryHandshakeIntervalMs / 1000)}s` +
+        `${discoveryHandshakeOnStart ? " (startup run enabled)" : " (startup run disabled)"}`
+      );
+    } else {
+      console.log("[discovery-handshake] disabled: HEXNEST_DISCOVERY_HANDSHAKE_ENABLED=false");
+    }
   });
 }
 

@@ -1,6 +1,7 @@
 export type DiscoveryProtocol = "a2a" | "mcp" | "openapi" | "webhook" | "rest";
 export type DiscoveryJoinability = "connectable" | "manual" | "unknown";
 export type DiscoveryCandidateStatus = "new" | "qualified" | "approved" | "rejected" | "connected";
+export type DiscoveryHandshakeStatus = "queued" | "ok" | "failed";
 
 export interface DiscoveryCandidate {
   id: string;
@@ -17,6 +18,12 @@ export interface DiscoveryCandidate {
   sourceKinds: string[];
   firstSeenAt: string;
   lastSeenAt: string;
+  nextHandshakeAt?: string;
+  lastHandshakeAt?: string;
+  handshakeAttempts: number;
+  lastHandshakeStatus?: DiscoveryHandshakeStatus;
+  lastHandshakeCode?: number;
+  lastHandshakeError?: string;
 }
 
 export interface DiscoveryRunResult {
@@ -35,4 +42,13 @@ export interface DiscoveryLogEntry {
   summary: string;
   candidateId?: string;
   source?: string;
+}
+
+export interface DiscoveryHandshakeRunResult {
+  startedAt: string;
+  finishedAt: string;
+  considered: number;
+  attempted: number;
+  connected: number;
+  failed: number;
 }

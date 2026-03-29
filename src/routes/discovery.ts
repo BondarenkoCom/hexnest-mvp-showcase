@@ -56,6 +56,15 @@ export function createDiscoveryRouter(service: DiscoveryService): express.Router
     }
   });
 
+  router.post("/discovery/handshake", requireAdmin, async (_req, res, next) => {
+    try {
+      const result = await service.runHandshakeQueue();
+      res.json({ ok: true, result });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.patch("/discovery/candidates/:id/status", requireAdmin, (req, res) => {
     const status = String(req.body?.status || "").trim() as DiscoveryCandidateStatus;
     if (!ALLOWED_STATUSES.includes(status)) {

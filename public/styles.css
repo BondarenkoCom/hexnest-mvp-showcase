@@ -1816,56 +1816,94 @@ select option {
   justify-content: center;
 }
 
-.scanner-hud-ring {
+.scanner-radar {
   position: relative;
   width: 320px;
   height: 320px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at center, rgba(22, 210, 255, 0.04), rgba(159, 18, 48, 0.05) 55%, transparent 62%),
-    conic-gradient(from 20deg, rgba(22, 210, 255, 0.3), rgba(255, 110, 139, 0.28), rgba(22, 210, 255, 0.3));
-  border: 2px solid rgba(22, 210, 255, 0.46);
+    radial-gradient(circle at center, rgba(22, 210, 255, 0.06), rgba(6, 20, 32, 0.98) 62%),
+    linear-gradient(145deg, rgba(6, 18, 29, 0.95), rgba(3, 8, 16, 0.95));
+  border: 2px solid rgba(22, 210, 255, 0.5);
   box-shadow:
-    inset 0 0 24px rgba(22, 210, 255, 0.2),
-    0 0 18px rgba(22, 210, 255, 0.2);
-  animation: scannerSpin 20s linear infinite;
+    inset 0 0 26px rgba(22, 210, 255, 0.18),
+    0 0 18px rgba(22, 210, 255, 0.2),
+    0 0 30px rgba(22, 210, 255, 0.1);
+  overflow: hidden;
 }
 
-.scanner-hud-ring::before {
+.scanner-radar-rings {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at center, transparent 16%, rgba(22, 210, 255, 0.28) 16.4%, transparent 17.2%),
+    radial-gradient(circle at center, transparent 31%, rgba(143, 231, 255, 0.26) 31.4%, transparent 32.2%),
+    radial-gradient(circle at center, transparent 46%, rgba(22, 210, 255, 0.2) 46.4%, transparent 47.2%),
+    radial-gradient(circle at center, transparent 61%, rgba(143, 231, 255, 0.18) 61.4%, transparent 62.2%),
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(22, 210, 255, 0.11) 0deg,
+      rgba(22, 210, 255, 0.11) 1deg,
+      transparent 1deg,
+      transparent 30deg
+    );
+}
+
+.scanner-radar::before {
   content: "";
   position: absolute;
-  inset: 18px;
+  inset: 6px;
   border-radius: 50%;
-  border: 1px dashed rgba(143, 231, 255, 0.48);
+  border: 1px dashed rgba(143, 231, 255, 0.3);
 }
 
-.scanner-hud-ring::after {
+.scanner-radar::after {
   content: "";
   position: absolute;
-  inset: 40px;
+  inset: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 110, 139, 0.28);
+  border: 1px solid rgba(255, 110, 139, 0.16);
 }
 
-.scanner-hud-core {
+.scanner-radar-sweep {
   position: absolute;
-  inset: 110px;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    rgba(22, 210, 255, 0.42) 0deg,
+    rgba(22, 210, 255, 0.25) 24deg,
+    rgba(22, 210, 255, 0.07) 52deg,
+    rgba(22, 210, 255, 0.01) 90deg,
+    transparent 130deg
+  );
+  mix-blend-mode: screen;
+  animation: scannerSweep 4.5s linear infinite;
+}
+
+.scanner-radar-core {
+  position: absolute;
+  inset: 132px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(22, 210, 255, 0.62);
-  background: rgba(3, 7, 12, 0.92);
-  box-shadow: inset 0 0 16px rgba(22, 210, 255, 0.25);
+  border: 1px solid rgba(22, 210, 255, 0.7);
+  background: rgba(2, 10, 16, 0.95);
+  box-shadow: inset 0 0 18px rgba(22, 210, 255, 0.3);
+  z-index: 4;
 }
 
-.scanner-hud-core span {
+.scanner-radar-core span {
   font-family: var(--font-mono);
   color: var(--cyan);
   font-size: var(--fs-sm);
   letter-spacing: 0.08em;
 }
 
-.scanner-hud-label {
+.scanner-radar-label {
   position: absolute;
   width: 100%;
   text-align: center;
@@ -1873,14 +1911,49 @@ select option {
   font-size: var(--fs-xs);
   letter-spacing: 0.08em;
   color: var(--cyan-soft);
+  z-index: 4;
 }
 
-.scanner-hud-label.top {
-  top: 38px;
+.scanner-radar-label.top {
+  top: 30px;
 }
 
-.scanner-hud-label.mid {
-  top: 68px;
+.scanner-radar-label.mid {
+  top: 58px;
+}
+
+.scanner-radar-blips {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.scanner-blip {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1px solid rgba(143, 231, 255, 0.7);
+  background: rgba(143, 231, 255, 0.7);
+  box-shadow: 0 0 12px rgba(143, 231, 255, 0.55);
+  animation: scannerBlipPulse 1.8s ease-in-out infinite;
+}
+
+.scanner-blip.mid {
+  border-color: rgba(255, 192, 110, 0.8);
+  background: rgba(255, 192, 110, 0.7);
+  box-shadow: 0 0 11px rgba(255, 192, 110, 0.55);
+}
+
+.scanner-blip.low {
+  border-color: rgba(255, 110, 139, 0.84);
+  background: rgba(255, 110, 139, 0.7);
+  box-shadow: 0 0 11px rgba(255, 110, 139, 0.55);
+}
+
+.scanner-blip.active {
+  animation-duration: 0.9s;
+  box-shadow: 0 0 16px rgba(143, 231, 255, 0.7);
 }
 
 .scanner-phases {
@@ -2090,7 +2163,7 @@ select option {
   font-size: var(--fs-sm);
 }
 
-@keyframes scannerSpin {
+@keyframes scannerSweep {
   from {
     transform: rotate(0deg);
   }
@@ -2099,18 +2172,30 @@ select option {
   }
 }
 
+@keyframes scannerBlipPulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.28);
+  }
+}
+
 @media (max-width: 1080px) {
   .scanner-hero {
     grid-template-columns: 1fr;
   }
 
-  .scanner-hud-ring {
+  .scanner-radar {
     width: 270px;
     height: 270px;
   }
 
-  .scanner-hud-core {
-    inset: 88px;
+  .scanner-radar-core {
+    inset: 107px;
   }
 
   .scan-candidate-row {
