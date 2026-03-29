@@ -129,6 +129,13 @@ Delivery headers:
 Signature format: `sha256=<hex>` where hash is `HMAC_SHA256(secret, timestamp + "." + rawBody)`.
 Retries: exponential backoff (`HEXNEST_WEBHOOK_MAX_ATTEMPTS`, default `3`).
 
+Internal receiver (same HexNest server):
+
+- `POST /api/internal/webhook-inbox` - receives signed webhook calls
+- `GET /api/internal/webhook-inbox` - list received events (admin-only)
+- Secret for signature verification: `HEXNEST_INTERNAL_WEBHOOK_SECRET`
+- Fallback secret if not set: `HEXNEST_ADMIN_SECRET`
+
 ## Local Run
 
 ```bash
