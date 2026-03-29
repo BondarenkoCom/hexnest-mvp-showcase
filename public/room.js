@@ -49,6 +49,11 @@ let heartbeatTimer = null;
 let sharedMessageFocused = false;
 let latestRoom = null;
 const shareLinkCache = new Map();
+const MARKET_AUTO_REFRESH_MS = 60000;
+let lastMarketRefreshAt = 0;
+let marketRefreshInFlight = false;
+let marketStateRoomId = "";
+let marketStateEnabled = null;
 
 init().catch(handleError);
 
@@ -58,7 +63,7 @@ refreshRoomBtn?.addEventListener("click", async () => {
 
 refreshMarketBtn?.addEventListener("click", async () => {
   if (!latestRoom) return;
-  await refreshMarketData(latestRoom, true);
+  await refreshMarketData(latestRoom, true, true);
 });
 
 forkRoomBtn?.addEventListener("click", async () => {
@@ -506,19 +511,35 @@ function renderArtifacts(artifacts) {
   });
 }
 
-async function refreshMarketData(room, announce = false) {
+async function refreshMarketData(room, announce = false, force = false) {
   if (!marketCardsEl || !marketMetaEl || !marketDataPaneEl) {
     return;
   }
 
   const enabled = Boolean(room?.settings?.marketDataEnabled);
   if (!enabled) {
+    if (marketStateRoomId === room?.id && marketStateEnabled === false) {
+      return;
+    }
+    marketStateRoomId = room?.id || "";
+    marketStateEnabled = false;
+    lastMarketRefreshAt = 0;
     marketDataPaneEl.classList.add("market-pane-disabled");
     marketMetaEl.textContent = "Market data mode is disabled for this room.";
     marketCardsEl.innerHTML = `<div class="market-card empty-card"><p class="line-body">Enable "Market Data (Manifold)" when creating the room.</p></div>`;
     return;
   }
 
+  const now = Date.now();
+  if (!force && marketStateRoomId === room?.id && now - lastMarketRefreshAt < MARKET_AUTO_REFRESH_MS) {
+    return;
+  }
+  if (marketRefreshInFlight) {
+    return;
+  }
+
+  marketStateRoomId = room?.id || "";
+  marketStateEnabled = true;
   marketDataPaneEl.classList.remove("market-pane-disabled");
   const query = deriveMarketQuery(room?.task || "");
   const endpoint = `/api/rooms/${encodeURIComponent(room.id)}/market-data/markets?limit=12${
@@ -526,6 +547,7 @@ async function refreshMarketData(room, announce = false) {
   }`;
 
   try {
+    marketRefreshInFlight = true;
     marketMetaEl.textContent = "Loading market intelligence...";
     const payload = await api(endpoint);
     const rows = Array.isArray(payload.value) ? payload.value : [];
@@ -533,6 +555,7 @@ async function refreshMarketData(room, announce = false) {
     const queryLabel = payload.query ? `Query: ${payload.query}` : "Latest active markets";
     marketMetaEl.textContent = `${queryLabel} | ${rows.length} cards | updated ${fetchedAt}`;
     renderMarketCards(rows);
+    lastMarketRefreshAt = Date.now();
     if (announce) {
       setMeta("Market cards refreshed.");
     }
@@ -540,6 +563,8 @@ async function refreshMarketData(room, announce = false) {
     const message = error instanceof Error ? error.message : String(error);
     marketMetaEl.textContent = `Market feed error: ${message}`;
     marketCardsEl.innerHTML = `<div class="market-card empty-card"><p class="line-body">Could not load market data.</p></div>`;
+  } finally {
+    marketRefreshInFlight = false;
   }
 }
 
