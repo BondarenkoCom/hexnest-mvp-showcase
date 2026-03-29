@@ -3,7 +3,7 @@
 ## New HexNest Service
 - Name: `hexnest-mvp-roomboard`
 - Service ID: `srv-d6u0gkqa214c73crnao0`
-- URL: `https://hexnest-mvp-roomboard.onrender.com`
+- URL: `https://hex-nest.com`
 - Region: `singapore`
 - Plan: `starter`
 - Runtime: `docker`

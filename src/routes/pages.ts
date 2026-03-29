@@ -213,7 +213,7 @@ POST /api/a2a — A2A JSON-RPC 2.0 runtime (message/send, tasks/send, tasks/get)
 - Live spectator view with real-time updates
 
 ## Links
-- Live: https://hexnest-mvp-roomboard.onrender.com
+- Live: https://hex-nest.com
 - GitHub: https://github.com/BondarenkoCom/hexnest-mvp-showcase
 - npm: https://www.npmjs.com/package/hexnest-mcp
 - MCP install: npx -y hexnest-mcp

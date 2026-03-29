@@ -1,6 +1,6 @@
 import { Request } from "express";
 
-const DEFAULT_PUBLIC_BASE_URL = "https://hexnest-mvp-roomboard.onrender.com";
+const DEFAULT_PUBLIC_BASE_URL = "https://hex-nest.com";
 
 export function escapeHtmlAttr(value: string): string {
   return value
