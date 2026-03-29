@@ -32,13 +32,21 @@ export async function cleanupInactiveRooms(
 
   for (const roomMeta of rooms) {
     try {
+      if ((roomMeta.messageCount ?? 0) > 0) {
+        // Only purge empty rooms. Any real conversation keeps the room.
+        continue;
+      }
+
       const room = await store.getRoom(roomMeta.id);
       if (!room) {
         continue;
       }
 
-      const lastChatMs = getLastChatTimestampMs(room);
-      const inactivityAnchorMs = lastChatMs ?? safeParseTimestamp(room.createdAt);
+      if (hasAnyUserOrAgentMessages(room)) {
+        continue;
+      }
+
+      const inactivityAnchorMs = safeParseTimestamp(room.createdAt);
       if (inactivityAnchorMs === null || inactivityAnchorMs > cutoffMs) {
         continue;
       }
@@ -75,21 +83,16 @@ export async function cleanupInactiveRooms(
   };
 }
 
-function getLastChatTimestampMs(room: RoomSnapshot): number | null {
-  let latest: number | null = null;
+function hasAnyUserOrAgentMessages(room: RoomSnapshot): boolean {
+  if ((room.messageCount ?? 0) > 0) {
+    return true;
+  }
   for (const event of room.timeline) {
-    if (event?.envelope?.message_type !== "chat") {
-      continue;
-    }
-    const parsed = safeParseTimestamp(event.timestamp);
-    if (parsed === null) {
-      continue;
-    }
-    if (latest === null || parsed > latest) {
-      latest = parsed;
+    if (event?.envelope?.message_type && event.envelope.message_type !== "system") {
+      return true;
     }
   }
-  return latest;
+  return false;
 }
 
 function safeParseTimestamp(value: string): number | null {

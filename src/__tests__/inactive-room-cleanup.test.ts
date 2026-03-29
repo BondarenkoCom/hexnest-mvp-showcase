@@ -35,7 +35,7 @@ class InMemoryCleanupStore {
 }
 
 describe("cleanupInactiveRooms", () => {
-  it("deletes rooms that have no chat activity for 24 hours", async () => {
+  it("deletes only empty rooms older than threshold", async () => {
     const nowMs = Date.parse("2026-03-29T12:00:00.000Z");
     const store = new InMemoryCleanupStore([
       roomFixture({
@@ -51,6 +51,11 @@ describe("cleanupInactiveRooms", () => {
         id: "recent-chat",
         createdAt: "2026-03-25T11:00:00.000Z",
         chats: ["2026-03-29T11:20:00.000Z"]
+      }),
+      roomFixture({
+        id: "old-non-chat-message",
+        createdAt: "2026-03-25T09:00:00.000Z",
+        proposals: ["2026-03-25T09:30:00.000Z"]
       })
     ]);
 
@@ -59,18 +64,19 @@ describe("cleanupInactiveRooms", () => {
       nowMs
     });
 
-    expect(result.scanned).toBe(3);
-    expect(result.deletedRoomIds).toEqual(["old-no-chat", "old-chat"]);
+    expect(result.scanned).toBe(4);
+    expect(result.deletedRoomIds).toEqual(["old-no-chat"]);
     expect(store.hasRoom("recent-chat")).toBe(true);
+    expect(store.hasRoom("old-chat")).toBe(true);
+    expect(store.hasRoom("old-non-chat-message")).toBe(true);
     expect(store.hasRoom("old-no-chat")).toBe(false);
   });
 
-  it("uses the latest chat timestamp, not system events", async () => {
+  it("ignores system-only events and still treats room as empty", async () => {
     const nowMs = Date.parse("2026-03-29T12:00:00.000Z");
     const room = roomFixture({
       id: "system-active-only",
       createdAt: "2026-03-25T11:00:00.000Z",
-      chats: ["2026-03-27T10:00:00.000Z"],
       systemEvents: ["2026-03-29T11:50:00.000Z"]
     });
     const store = new InMemoryCleanupStore([room]);
@@ -89,6 +95,7 @@ function roomFixture(input: {
   id: string;
   createdAt: string;
   chats?: string[];
+  proposals?: string[];
   systemEvents?: string[];
 }): RoomSnapshot {
   const timeline = [
@@ -132,6 +139,27 @@ function roomFixture(input: {
         risks: [],
         need_human: false,
         explanation: "hello"
+      }
+    })),
+    ...(input.proposals || []).map((timestamp, index) => ({
+      id: `proposal-${input.id}-${index}`,
+      timestamp,
+      phase: "open_room" as const,
+      envelope: {
+        message_type: "proposal" as const,
+        from_agent: "agent",
+        to_agent: "room" as const,
+        scope: "room" as const,
+        triggered_by: null,
+        task_id: input.id,
+        intent: "proposal",
+        artifacts: [],
+        status: "ok" as const,
+        confidence: 0.8,
+        assumptions: [],
+        risks: [],
+        need_human: false,
+        explanation: "proposal"
       }
     }))
   ];

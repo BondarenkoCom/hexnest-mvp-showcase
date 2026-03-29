@@ -35,7 +35,7 @@ const indexHtmlTemplate = fs.readFileSync(path.join(publicDir, "index.html"), "u
 const roomHtmlTemplate = fs.readFileSync(path.join(publicDir, "room.html"), "utf8");
 const roomInactivityDeleteHours = Math.max(
   0,
-  Number(process.env.HEXNEST_ROOM_INACTIVITY_DELETE_HOURS || 24)
+  Number(process.env.HEXNEST_ROOM_INACTIVITY_DELETE_HOURS || 0)
 );
 const roomCleanupIntervalMs = Math.max(
   10_000,
