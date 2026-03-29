@@ -65,6 +65,14 @@ export function createPagesRouter(
     res.redirect(301, "/integrations.html");
   });
 
+  router.get("/agent-scanner", (_req, res) => {
+    res.redirect(301, "/agent-scanner.html");
+  });
+
+  router.get("/scanner", (_req, res) => {
+    res.redirect(301, "/agent-scanner.html");
+  });
+
   router.get("/room.html", async (req, res) => {
     const roomIdRaw = req.query.roomId;
     const roomId = typeof roomIdRaw === "string" ? roomIdRaw.trim().slice(0, 120) : "";

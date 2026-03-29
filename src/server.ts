@@ -20,9 +20,12 @@ import { createPagesRouter } from "./routes/pages";
 import { createIdentityRouter } from "./routes/identity";
 import { createWebhooksRouter } from "./routes/webhooks";
 import { createInternalWebhookInboxRouter } from "./routes/internal-webhook-inbox";
+import { createDiscoveryRouter } from "./routes/discovery";
 import { createAuthMiddleware } from "./middleware/auth";
 import { seedDirectoryAgents } from "./scripts/seed-agents";
 import { WebhookDispatcher } from "./webhooks/WebhookDispatcher";
+import { cleanupInactiveRooms } from "./utils/inactive-room-cleanup";
+import { DiscoveryService } from "./discovery/DiscoveryService";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -30,6 +33,19 @@ const databaseUrl = process.env.DATABASE_URL || "";
 const publicDir = path.resolve(__dirname, "../public");
 const indexHtmlTemplate = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
 const roomHtmlTemplate = fs.readFileSync(path.join(publicDir, "room.html"), "utf8");
+const roomInactivityDeleteHours = Math.max(
+  0,
+  Number(process.env.HEXNEST_ROOM_INACTIVITY_DELETE_HOURS || 24)
+);
+const roomCleanupIntervalMs = Math.max(
+  10_000,
+  Number(process.env.HEXNEST_ROOM_CLEANUP_INTERVAL_MS || 60 * 60 * 1000)
+);
+const discoveryScanIntervalMs = Math.max(
+  60_000,
+  Number(process.env.HEXNEST_DISCOVERY_SCAN_INTERVAL_MS || 6 * 60 * 60 * 1000)
+);
+const discoveryScanOnStart = process.env.HEXNEST_DISCOVERY_SCAN_ON_START !== "false";
 
 if (!databaseUrl) {
   console.error("DATABASE_URL env var is required");
@@ -38,6 +54,7 @@ if (!databaseUrl) {
 
 const store = new PostgresRoomStore(databaseUrl);
 const webhooks = new WebhookDispatcher(store);
+const discovery = new DiscoveryService(store);
 const pythonJobs = new PythonJobManager(
   PythonJobManager.defaultOptions(createPythonJobUpdateHandler(store, webhooks))
 );
@@ -62,6 +79,7 @@ app.use("/api/agents", createAgentsRouter(store));
 app.use("/api/subnests", createSubnestsRouter(store));
 app.use("/api", createIdentityRouter(store));
 app.use("/api", createWebhooksRouter(store, webhooks));
+app.use("/api", createDiscoveryRouter(discovery));
 app.use("/api", createInternalWebhookInboxRouter());
 app.use("/api", createRoomsRouter(store, webhooks));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
@@ -93,9 +111,72 @@ async function main(): Promise<void> {
 
   await store.init();
   await seedDirectoryAgents(store);
+  let roomCleanupRunning = false;
+  let discoveryScanRunning = false;
+  const runRoomCleanup = async (): Promise<void> => {
+    if (roomInactivityDeleteHours <= 0 || roomCleanupRunning) {
+      return;
+    }
+
+    roomCleanupRunning = true;
+    try {
+      const result = await cleanupInactiveRooms(store, webhooks, {
+        inactivityMs: roomInactivityDeleteHours * 60 * 60 * 1000
+      });
+      if (result.deletedRoomIds.length > 0 || result.failedRoomIds.length > 0) {
+        console.log(
+          `[cleanup] scanned=${result.scanned} deleted=${result.deletedRoomIds.length} failed=${result.failedRoomIds.length}`
+        );
+      }
+    } catch (error) {
+      console.error("[cleanup] room inactivity cleanup failed:", error);
+    } finally {
+      roomCleanupRunning = false;
+    }
+  };
+  const runDiscoveryScan = async (): Promise<void> => {
+    if (discoveryScanRunning) {
+      return;
+    }
+    discoveryScanRunning = true;
+    try {
+      const result = await discovery.runScan();
+      console.log(
+        `[discovery] scanned=${result.scanned} upserted=${result.upserted} errors=${result.errors.length}`
+      );
+    } catch (error) {
+      console.error("[discovery] scan failed:", error);
+    } finally {
+      discoveryScanRunning = false;
+    }
+  };
   app.listen(port, () => {
     console.log(`hexnest-mvp listening on :${port}`);
     console.log(`postgres: ${databaseUrl.replace(/:\/\/[^@]+@/, "://<credentials>@")}`);
+    if (roomInactivityDeleteHours > 0) {
+      const interval = setInterval(() => {
+        void runRoomCleanup();
+      }, roomCleanupIntervalMs);
+      interval.unref();
+      void runRoomCleanup();
+      console.log(
+        `[cleanup] enabled: delete rooms inactive for >= ${roomInactivityDeleteHours}h, check every ${Math.round(roomCleanupIntervalMs / 1000)}s`
+      );
+    } else {
+      console.log("[cleanup] disabled: HEXNEST_ROOM_INACTIVITY_DELETE_HOURS <= 0");
+    }
+
+    const discoveryInterval = setInterval(() => {
+      void runDiscoveryScan();
+    }, discoveryScanIntervalMs);
+    discoveryInterval.unref();
+    if (discoveryScanOnStart) {
+      void runDiscoveryScan();
+    }
+    console.log(
+      `[discovery] enabled: scan every ${Math.round(discoveryScanIntervalMs / 1000)}s` +
+      `${discoveryScanOnStart ? " (startup scan enabled)" : " (startup scan disabled)"}`
+    );
   });
 }
 
