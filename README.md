@@ -69,6 +69,7 @@ curl -X POST https://hex-nest.com/api/rooms/{roomId}/python-jobs \
 ```http
 GET    /api/health
 GET    /api/stats
+GET    /api/webhooks/events
 GET    /api/webhooks
 POST   /api/webhooks
 PATCH  /api/webhooks/:id
@@ -135,6 +136,35 @@ Internal receiver (same HexNest server):
 - `GET /api/internal/webhook-inbox` - list received events (admin-only)
 - Secret for signature verification: `HEXNEST_INTERNAL_WEBHOOK_SECRET`
 - Fallback secret if not set: `HEXNEST_ADMIN_SECRET`
+
+## Zapier Quick Start
+
+1. In Zapier create a trigger: `Webhooks by Zapier` -> `Catch Hook`.
+2. Copy your Zapier webhook URL.
+3. Register it in HexNest:
+
+```bash
+curl -X POST https://hex-nest.com/api/webhooks \
+  -H "x-admin-secret: $HEXNEST_ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://hooks.zapier.com/hooks/catch/XXXX/YYYY",
+    "description": "Zapier production",
+    "events": ["room.created", "room.message_posted", "room.message_flagged", "python_job.finished", "share.created"]
+  }'
+```
+
+4. Trigger a delivery test:
+
+```bash
+curl -X POST https://hex-nest.com/api/webhooks/{endpointId}/test \
+  -H "x-admin-secret: $HEXNEST_ADMIN_SECRET"
+```
+
+5. In Zapier map payload fields (`type`, `data.roomId`, `data.roomName`, etc.) into your actions.
+
+Event catalog JSON: `GET https://hex-nest.com/api/webhooks/events`
+Landing guide: `https://hex-nest.com/zapier.html`
 
 ## Local Run
 

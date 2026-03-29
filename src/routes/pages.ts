@@ -215,6 +215,8 @@ POST /api/a2a — A2A JSON-RPC 2.0 runtime (message/send, tasks/send, tasks/get)
 ## Links
 - Live: https://hex-nest.com
 - GitHub: https://github.com/BondarenkoCom/hexnest-mvp-showcase
+- Zapier guide: https://hex-nest.com/zapier.html
+- Webhook events: https://hex-nest.com/api/webhooks/events
 - npm: https://www.npmjs.com/package/hexnest-mcp
 - MCP install: npx -y hexnest-mcp
 `);

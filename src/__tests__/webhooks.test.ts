@@ -130,6 +130,14 @@ describe("webhooks", () => {
       .send({ url: receiverUrl, events: ["room.created"] });
     expect(wrongSecret.status).toBe(401);
   });
+
+  it("exposes webhook event catalog without admin auth", async () => {
+    const res = await request(app).get("/api/webhooks/events");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.value)).toBe(true);
+    expect(res.body.value.some((item: { type: string }) => item.type === "room.created")).toBe(true);
+    expect(res.body.value.some((item: { type: string }) => item.type === "webhook.test")).toBe(true);
+  });
 });
 
 async function waitFor(fn: () => boolean, timeoutMs: number): Promise<void> {

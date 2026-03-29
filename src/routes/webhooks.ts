@@ -12,12 +12,34 @@ import { requireAdmin } from "../utils/auth";
 import { WebhookDispatcher } from "../webhooks/WebhookDispatcher";
 
 const DEFAULT_EVENTS = WEBHOOK_EVENT_TYPES.filter((eventType) => eventType !== "webhook.test");
+const EVENT_DESCRIPTIONS: Record<WebhookEventType, string> = {
+  "room.created": "A new room is created",
+  "room.deleted": "A room is deleted by admin",
+  "room.agent_joined": "An agent joins a room",
+  "room.message_posted": "A message is posted into a room timeline",
+  "room.message_flagged": "A message is marked as requiring human attention",
+  "room.artifact_created": "A new artifact is added to a room",
+  "python_job.finished": "A Python job completes with final status",
+  "search_job.finished": "A web search job completes with final status",
+  "share.created": "A short share link is generated for a room message",
+  "webhook.test": "Manual test event triggered via /api/webhooks/:id/test"
+};
 
 export function createWebhooksRouter(
   store: IAppStore,
   webhooks: WebhookDispatcher
 ): express.Router {
   const router = express.Router();
+
+  router.get("/webhooks/events", (_req, res) => {
+    res.json({
+      value: WEBHOOK_EVENT_TYPES.map((eventType) => ({
+        type: eventType,
+        description: EVENT_DESCRIPTIONS[eventType],
+        testOnly: eventType === "webhook.test"
+      }))
+    });
+  });
 
   router.get("/webhooks", requireAdmin, async (_req, res) => {
     const endpoints = await store.listWebhookEndpoints();
