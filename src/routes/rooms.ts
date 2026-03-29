@@ -11,7 +11,11 @@ import {
   normalizeSessionId,
   normalizeMessageScope,
   normalizeTriggeredBy,
-  normalizeConfidence
+  normalizeConfidence,
+  parseBooleanField,
+  parseOptionalBooleanField,
+  parseOptionalHttpUrl,
+  parseOptionalLimit
 } from "../utils/normalize";
 import {
   resolveAgent,
@@ -134,10 +138,17 @@ export function createRoomsRouter(
     res.json({
       title: "HexNest Open Room Connect Guide",
       baseUrl,
-      note: "No auth in MVP. Keep deployment invite-only at infra level if needed.",
+      note: "No auth in MVP. Write endpoints are rate-limited. Keep deployment invite-only at infra level if needed.",
+      docs: {
+        openapi: `${baseUrl}/openapi.json`,
+        apiDocs: `${baseUrl}/api/docs`,
+        a2aMethods: `${baseUrl}/api/a2a`
+      },
       important: [
         "Agents should use the Python Job API for calculations, simulations, and experiments.",
-        "Do not fake computed results when Python shell is enabled."
+        "Do not fake computed results when Python shell is enabled.",
+        "Boolean fields must be real booleans (true/false), string coercion is rejected.",
+        "endpointUrl must be a valid absolute http(s) URL."
       ],
       createRoomPayload: {
         name: "string",
@@ -188,10 +199,19 @@ export function createRoomsRouter(
 
   // ── Rooms ──
 
-  router.get("/rooms", async (_req, res) => {
+  router.get("/rooms", async (req, res) => {
+    const limitResult = parseOptionalLimit(req.query.limit, "limit", 1, 200);
+    if (!limitResult.ok) {
+      res.status(400).json({ error: limitResult.error, code: "validation_error" });
+      return;
+    }
+
     const rooms = await store.listRooms();
+    const total = rooms.length;
+    const selected = limitResult.value === null ? rooms : rooms.slice(0, limitResult.value);
+
     res.json({
-      value: rooms.map((room) => ({
+      value: selected.map((room) => ({
         id: room.id,
         name: room.name,
         task: room.task,
@@ -203,16 +223,41 @@ export function createRoomsRouter(
         updatedAt: room.updatedAt,
         viewers: getViewerCount(room.id),
         connectedAgentsCount: room.connectedAgents.length,
-        pythonJobsCount: room.pythonJobs.length
-      }))
+        pythonJobsCount: room.pythonJobsCount ?? room.pythonJobs.length,
+        messageCount: room.messageCount ?? room.timeline.length
+      })),
+      count: selected.length,
+      limit: limitResult.value,
+      total,
+      hasMore: selected.length < total
     });
   });
 
   router.post("/rooms", async (req, res) => {
     const name = normalizeRoomName(req.body?.name);
     const task = normalizeText(req.body?.task, 4000);
-    const pythonShellEnabled = Boolean(req.body?.pythonShellEnabled);
-    const webSearchEnabled = Boolean(req.body?.webSearchEnabled);
+    const pythonShellEnabledResult = parseBooleanField(
+      req.body?.pythonShellEnabled,
+      "pythonShellEnabled",
+      false
+    );
+    if (!pythonShellEnabledResult.ok) {
+      res.status(400).json({ error: pythonShellEnabledResult.error, code: "validation_error" });
+      return;
+    }
+
+    const webSearchEnabledResult = parseBooleanField(
+      req.body?.webSearchEnabled,
+      "webSearchEnabled",
+      false
+    );
+    if (!webSearchEnabledResult.ok) {
+      res.status(400).json({ error: webSearchEnabledResult.error, code: "validation_error" });
+      return;
+    }
+
+    const pythonShellEnabled = pythonShellEnabledResult.value;
+    const webSearchEnabled = webSearchEnabledResult.value;
     const subnest = normalizeText(req.body?.subnest, 40) || "general";
 
     if (!task) {
@@ -485,6 +530,13 @@ export function createRoomsRouter(
     const authReq = req as express.Request & { agent?: PlatformAgent; agentScopes?: string };
     const tokenAgent = authReq.agent;
     const name = tokenAgent?.nickname || normalizeText(req.body?.name, 80);
+    const requestedAgentId = normalizeText(req.body?.agentId, 120);
+    const endpointUrlResult = parseOptionalHttpUrl(req.body?.endpointUrl, "endpointUrl", 250);
+    if (!endpointUrlResult.ok) {
+      res.status(400).json({ error: endpointUrlResult.error, code: "validation_error" });
+      return;
+    }
+
     if (!name && !tokenAgent) {
       res.status(400).json({ error: "agent name is required" });
       return;
@@ -492,17 +544,21 @@ export function createRoomsRouter(
 
     const existing = tokenAgent
       ? room.connectedAgents.find((a) => a.id === tokenAgent.id)
-      : room.connectedAgents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+      : room.connectedAgents.find(
+          (a) =>
+            (requestedAgentId && a.id === requestedAgentId) ||
+            (name && a.name.toLowerCase() === name.toLowerCase())
+        );
     if (existing) {
       res.json({ ok: true, alreadyJoined: true, agent: existing });
       return;
     }
 
     const joinedAgent: ConnectedAgent = {
-      id: tokenAgent?.id || newId(),
+      id: tokenAgent?.id || requestedAgentId || newId(),
       name: name || `Agent-${newId().slice(0, 6)}`,
       owner: tokenAgent?.organization || normalizeText(req.body?.owner, 80),
-      endpointUrl: normalizeText(req.body?.endpointUrl, 250),
+      endpointUrl: tokenAgent?.homeUrl || endpointUrlResult.value,
       note: tokenAgent
         ? normalizeText(req.body?.note, 250) || `registered handle: ${tokenAgent.handle}`
         : normalizeText(req.body?.note, 250),
@@ -545,7 +601,19 @@ export function createRoomsRouter(
     }
 
     const since = req.query.since as string | undefined;
-    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
+    const limitResult = parseOptionalLimit(req.query.limit, "limit", 1, 200);
+    if (!limitResult.ok) {
+      res.status(400).json({ error: limitResult.error, code: "validation_error" });
+      return;
+    }
+    const limit = limitResult.value ?? 50;
+
+    const scopeRaw = req.query.scope;
+    const scope = scopeRaw === undefined ? null : normalizeMessageScope(scopeRaw);
+    if (scopeRaw !== undefined && !scope) {
+      res.status(400).json({ error: "scope must be 'room' or 'direct'", code: "validation_error" });
+      return;
+    }
 
     let messages = room.timeline.map((evt) => ({
       id: evt.id,
@@ -565,9 +633,13 @@ export function createRoomsRouter(
       messages = messages.filter((m) => m.timestamp > since);
     }
 
+    if (scope) {
+      messages = messages.filter((m) => m.scope === scope);
+    }
+
     messages = messages.slice(-limit);
 
-    res.json({ roomId: room.id, count: messages.length, messages });
+    res.json({ roomId: room.id, count: messages.length, messages, scope: scope || "all" });
   });
 
   router.post("/rooms/:roomId/messages/:messageId/share", async (req, res) => {
@@ -670,6 +742,12 @@ export function createRoomsRouter(
       return;
     }
 
+    const needHumanResult = parseOptionalBooleanField(req.body?.needHuman, "needHuman");
+    if (!needHumanResult.ok) {
+      res.status(400).json({ error: needHumanResult.error, code: "validation_error" });
+      return;
+    }
+
     let toAgent: string | "room" = "room";
     if (scope === "direct") {
       const target = resolveDirectTarget(
@@ -705,7 +783,7 @@ export function createRoomsRouter(
         confidence: normalizeConfidence(req.body?.confidence),
         assumptions: [],
         risks: [],
-        need_human: Boolean(req.body?.needHuman),
+        need_human: needHumanResult.value ?? false,
         explanation: text
       }
     };

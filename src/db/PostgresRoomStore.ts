@@ -138,7 +138,8 @@ export class PostgresRoomStore implements IAppStore {
     const result = await this.pool.query<RoomsRow>(
       `SELECT r.id, r.task, r.name, r.subnest, r.status, r.phase, r.created_at, r.updated_at,
               r.agent_ids_json, r.settings_json, r.final_output, r.connected_agents_json, r.search_jobs_json,
-              (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id AND rt.message_type != 'system')::int AS message_count
+              (SELECT COUNT(*) FROM room_timeline rt WHERE rt.room_id = r.id AND rt.message_type != 'system')::int AS message_count,
+              (SELECT COUNT(*) FROM room_python_jobs pj WHERE pj.room_id = r.id)::int AS python_jobs_count
        FROM rooms r ORDER BY r.updated_at DESC`
     );
     return result.rows.map(row => this.buildSnapshot(row, [], [], []));
@@ -743,7 +744,8 @@ export class PostgresRoomStore implements IAppStore {
       timeline,
       artifacts,
       pythonJobs,
-      messageCount: row.message_count ?? timeline.length
+      messageCount: row.message_count ?? timeline.length,
+      pythonJobsCount: row.python_jobs_count ?? pythonJobs.length
     };
   }
 
@@ -886,6 +888,7 @@ interface RoomsRow {
   connected_agents_json: ConnectedAgent[];
   search_jobs_json: WebSearchJob[];
   message_count?: number;
+  python_jobs_count?: number;
 }
 
 interface TimelineRow {

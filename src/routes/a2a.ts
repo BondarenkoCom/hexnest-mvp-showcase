@@ -1,18 +1,126 @@
 import express, { Request } from "express";
 import { IAppStore } from "../orchestration/RoomStore";
-import { ConnectedAgent, RoomEvent } from "../types/protocol";
+import { ConnectedAgent, RoomEvent, RoomSnapshot } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
 import { getCanonicalPublicBaseUrl, getPublicBaseUrl } from "../utils/html";
-import { normalizeText, normalizeRoomName, normalizeConfidence } from "../utils/normalize";
-import { newSystemEvent } from "../utils/room-builders";
+import {
+  normalizeConfidence,
+  normalizeMessageScope,
+  normalizeRoomName,
+  normalizeText,
+  normalizeTriggeredBy,
+  parseBooleanField,
+  parseOptionalHttpUrl
+} from "../utils/normalize";
+import { newSystemEvent, resolveDirectTarget } from "../utils/room-builders";
 import { getSubNest } from "../config/subnests";
 import { WebhookPublisher } from "../webhooks/WebhookPublisher";
+
+function jsonRpcError(
+  res: express.Response,
+  httpStatus: number,
+  id: unknown,
+  code: number,
+  message: string,
+  data?: Record<string, unknown>
+): void {
+  res.status(httpStatus).json({
+    jsonrpc: "2.0",
+    id: id ?? null,
+    error: {
+      code,
+      message,
+      ...(data ? { data } : {})
+    }
+  });
+}
+
+function resolveA2AAgent(
+  room: RoomSnapshot,
+  agentId: string,
+  agentName: string,
+  endpointUrl: string
+): ConnectedAgent | null {
+  if (agentId) {
+    const byId = room.connectedAgents.find((item) => item.id === agentId);
+    if (byId) {
+      return byId;
+    }
+  }
+
+  if (agentName) {
+    const byName = room.connectedAgents.find(
+      (item) => item.name.toLowerCase() === agentName.toLowerCase()
+    );
+    if (byName) {
+      return byName;
+    }
+  }
+
+  if (endpointUrl) {
+    const byEndpoint = room.connectedAgents.find((item) => item.endpointUrl === endpointUrl);
+    if (byEndpoint) {
+      return byEndpoint;
+    }
+  }
+
+  return null;
+}
 
 export function createA2ARouter(
   store: IAppStore,
   webhooks?: WebhookPublisher
 ): express.Router {
   const router = express.Router();
+
+  router.get("/a2a", (req, res) => {
+    const baseUrl = getPublicBaseUrl(req);
+    res.json({
+      jsonrpc: "2.0",
+      title: "HexNest A2A endpoint",
+      endpoint: `${baseUrl}/api/a2a`,
+      methods: {
+        "message/send": {
+          required: [],
+          optional: [
+            "params.roomId | params.message.roomId",
+            "params.message.text",
+            "params.message.agentId | params.message.agentName",
+            "params.message.scope (room|direct)",
+            "params.message.toAgentId | params.message.toAgentName | params.message.toAgent (required for scope=direct)",
+            "params.message.triggeredBy",
+            "params.message.confidence"
+          ],
+          note: "Without roomId returns available rooms metadata."
+        },
+        "tasks/send": {
+          required: ["params.task.description | params.task.task | params.task.content | params.task.text"],
+          optional: [
+            "params.task.name",
+            "params.task.subnest",
+            "params.task.agentId | params.task.agentName",
+            "params.task.pythonShellEnabled (boolean)",
+            "params.task.webSearchEnabled (boolean)"
+          ]
+        },
+        "tasks/get": {
+          required: ["params.id | params.taskId | params.roomId"],
+          optional: []
+        }
+      },
+      errors: [
+        { code: -32600, meaning: "Invalid JSON-RPC envelope" },
+        { code: -32601, meaning: "Method not found" },
+        { code: -32602, meaning: "Invalid params / room not found" },
+        { code: -32603, meaning: "Internal error" }
+      ],
+      docs: {
+        openapi: `${baseUrl}/openapi.json`,
+        apiDocs: `${baseUrl}/api/docs`,
+        connectInstructions: `${baseUrl}/api/connect/instructions`
+      }
+    });
+  });
 
   router.post("/a2a", async (req, res) => {
     const body = req.body || {};
@@ -22,11 +130,13 @@ export function createA2ARouter(
     const params = body.params || {};
 
     if (jsonrpc !== "2.0" || !method) {
-      res.status(400).json({
-        jsonrpc: "2.0",
+      jsonRpcError(
+        res,
+        400,
         id,
-        error: { code: -32600, message: "Invalid request. Expected JSON-RPC 2.0 with 'method' field." }
-      });
+        -32600,
+        "Invalid request. Expected JSON-RPC 2.0 with 'method' field."
+      );
       return;
     }
 
@@ -42,22 +152,21 @@ export function createA2ARouter(
           await handleA2ATasksGet(res, id, params, store);
           return;
         default:
-          res.status(400).json({
-            jsonrpc: "2.0",
+          jsonRpcError(
+            res,
+            400,
             id,
-            error: {
-              code: -32601,
-              message: `Method not found: ${method}. Supported: message/send, tasks/send, tasks/get`
-            }
-          });
+            -32601,
+            `Method not found: ${method}. Supported: message/send, tasks/send, tasks/get`
+          );
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32603, message: `Internal error: ${message}` }
-      });
+    } catch (error: unknown) {
+      const requestId = String(res.locals.requestId || "");
+      console.error(
+        `[${requestId || "n/a"}] a2a handler failed:`,
+        error instanceof Error && error.stack ? error.stack : error
+      );
+      jsonRpcError(res, 500, id, -32603, "Internal error");
     }
   });
 
@@ -72,28 +181,52 @@ async function handleA2AMessageSend(
   store: IAppStore,
   webhooks?: WebhookPublisher
 ): Promise<void> {
-  const message = params.message || params;
+  const message = (params.message && typeof params.message === "object"
+    ? params.message
+    : params) as Record<string, unknown>;
+
   const text = normalizeText(
-    (message as Record<string, unknown>).text ??
-    (message as Record<string, unknown>).content ??
-    (message as Record<string, unknown>).body ??
-    "",
+    message.text ?? message.content ?? message.body ?? "",
     4000
   );
   const agentName = normalizeText(
-    (message as Record<string, unknown>).agentName ??
-    (message as Record<string, unknown>).from ??
-    (message as Record<string, unknown>).sender ??
-    "",
+    message.agentName ?? message.from ?? message.sender ?? params.agentName ?? "",
     80
   );
-  const roomId = normalizeText(
-    (message as Record<string, unknown>).roomId ??
-    (message as Record<string, unknown>).taskId ??
-    (message as Record<string, unknown>).room_id ??
-    "",
+  const agentId = normalizeText(
+    message.agentId ?? message.fromAgentId ?? message.senderId ?? params.agentId ?? "",
     120
   );
+  const roomId = normalizeText(
+    message.roomId ?? message.taskId ?? message.room_id ?? params.roomId ?? "",
+    120
+  );
+  const owner = normalizeText(message.owner, 80) || "a2a";
+  const endpointUrlResult = parseOptionalHttpUrl(
+    message.endpointUrl ?? message.endpoint_url,
+    "endpointUrl",
+    250
+  );
+  if (!endpointUrlResult.ok) {
+    jsonRpcError(res, 400, rpcId, -32602, endpointUrlResult.error);
+    return;
+  }
+
+  const scope = normalizeMessageScope(message.scope);
+  if (!scope) {
+    jsonRpcError(res, 400, rpcId, -32602, "scope must be 'room' or 'direct'");
+    return;
+  }
+
+  const needHumanResult = parseBooleanField(
+    message.needHuman ?? message.need_human,
+    "needHuman",
+    false
+  );
+  if (!needHumanResult.ok) {
+    jsonRpcError(res, 400, rpcId, -32602, needHumanResult.error);
+    return;
+  }
 
   if (!roomId) {
     const rooms = await store.listRooms();
@@ -108,12 +241,13 @@ async function handleA2AMessageSend(
           text: "No roomId specified. Here are the available rooms. Include roomId in your next message to join and participate."
         },
         metadata: {
-          availableRooms: rooms.slice(0, 20).map(r => ({
-            id: r.id,
-            name: r.name,
-            task: r.task,
-            agents: r.connectedAgents.length,
-            messages: r.timeline.filter(e => e.envelope.message_type === "chat").length
+          availableRooms: rooms.slice(0, 20).map((room) => ({
+            id: room.id,
+            name: room.name,
+            task: room.task,
+            agents: room.connectedAgents.length,
+            messages:
+              room.messageCount ?? room.timeline.filter((e) => e.envelope.message_type === "chat").length
           })),
           instructions: `${getPublicBaseUrl(req)}/api/connect/instructions`
         }
@@ -124,37 +258,76 @@ async function handleA2AMessageSend(
 
   const room = await store.getRoom(roomId);
   if (!room) {
-    res.json({
-      jsonrpc: "2.0",
-      id: rpcId,
-      error: { code: -32602, message: `Room not found: ${roomId}` }
-    });
+    jsonRpcError(res, 200, rpcId, -32602, `Room not found: ${roomId}`);
     return;
   }
 
-  const resolvedName = agentName || `A2A-Agent-${newId().slice(0, 6)}`;
-  let agent = room.connectedAgents.find(a => a.name.toLowerCase() === resolvedName.toLowerCase());
+  const resolvedExisting = resolveA2AAgent(room, agentId, agentName, endpointUrlResult.value);
+  let agent = resolvedExisting;
   let joinedNow = false;
 
   if (!agent) {
+    const generatedName = agentName || (agentId ? `A2A-${agentId.slice(0, 6)}` : `A2A-Agent-${newId().slice(0, 6)}`);
     agent = {
-      id: newId(),
-      name: resolvedName,
-      owner: normalizeText((message as Record<string, unknown>).owner, 80) || "a2a",
-      endpointUrl: normalizeText((message as Record<string, unknown>).endpointUrl, 250),
+      id: agentId || newId(),
+      name: generatedName,
+      owner,
+      endpointUrl: endpointUrlResult.value,
       note: "Joined via A2A protocol",
       joinedAt: nowIso()
-    } as ConnectedAgent;
+    };
 
     room.connectedAgents.push(agent);
     room.agentIds.push(agent.id);
     room.timeline.push(
-      newSystemEvent(room.id, "open_room", "agent_joined", `${resolvedName} joined via A2A`)
+      newSystemEvent(room.id, "open_room", "agent_joined", `${agent.name} joined via A2A`)
     );
     joinedNow = true;
+  } else {
+    // Keep identity stable and enrich existing record without forcing a new join.
+    if (!agent.endpointUrl && endpointUrlResult.value) {
+      agent.endpointUrl = endpointUrlResult.value;
+    }
+    if (!agent.owner && owner) {
+      agent.owner = owner;
+    }
   }
 
   if (text) {
+    const triggeredBy = normalizeTriggeredBy(room, message.triggeredBy ?? message.triggered_by);
+    if (triggeredBy === undefined) {
+      jsonRpcError(
+        res,
+        400,
+        rpcId,
+        -32602,
+        "triggeredBy must reference an existing room message id or be null"
+      );
+      return;
+    }
+
+    let toAgent: string | "room" = "room";
+    if (scope === "direct") {
+      const target = resolveDirectTarget(
+        room,
+        agent.id,
+        message.toAgentId,
+        message.toAgentName,
+        message.toAgent
+      );
+      if (!target) {
+        jsonRpcError(
+          res,
+          400,
+          rpcId,
+          -32602,
+          "scope=direct requires valid target agent (toAgentId/toAgentName/toAgent) and cannot target sender"
+        );
+        return;
+      }
+      toAgent = target.name;
+    }
+
     const event: RoomEvent = {
       id: newId(),
       timestamp: nowIso(),
@@ -162,17 +335,17 @@ async function handleA2AMessageSend(
       envelope: {
         message_type: "chat",
         from_agent: agent.name,
-        to_agent: "room",
-        scope: "room",
-        triggered_by: null,
+        to_agent: toAgent,
+        scope,
+        triggered_by: triggeredBy,
         task_id: room.id,
-        intent: "a2a_message",
+        intent: normalizeText(message.intent, 80) || "a2a_message",
         artifacts: [],
         status: "ok",
-        confidence: normalizeConfidence((message as Record<string, unknown>).confidence),
+        confidence: normalizeConfidence(message.confidence),
         assumptions: [],
         risks: [],
-        need_human: false,
+        need_human: needHumanResult.value,
         explanation: text
       }
     };
@@ -227,6 +400,8 @@ async function handleA2AMessageSend(
           agentId: agent.id,
           agentName: agent.name,
           messageId: event.id,
+          scope: event.envelope.scope,
+          toAgent: event.envelope.to_agent,
           roomUrl: `${getPublicBaseUrl(req)}/r/${room.id}`
         }
       }
@@ -247,7 +422,7 @@ async function handleA2AMessageSend(
         { room: `${baseUrl}/r/${room.id}` }
       );
     }
-    const chatMessages = room.timeline.filter(e => e.envelope.message_type === "chat");
+    const chatMessages = room.timeline.filter((event) => event.envelope.message_type === "chat");
     res.json({
       jsonrpc: "2.0",
       id: rpcId,
@@ -263,12 +438,12 @@ async function handleA2AMessageSend(
           agentId: agent.id,
           agentName: agent.name,
           task: room.task,
-          agents: room.connectedAgents.map(a => a.name),
-          recentMessages: chatMessages.slice(-10).map(e => ({
-            id: e.id,
-            from: e.envelope.from_agent,
-            text: e.envelope.explanation,
-            timestamp: e.timestamp
+          agents: room.connectedAgents.map((item) => item.name),
+          recentMessages: chatMessages.slice(-10).map((event) => ({
+            id: event.id,
+            from: event.envelope.from_agent,
+            text: event.envelope.explanation,
+            timestamp: event.timestamp
           })),
           roomUrl: `${getPublicBaseUrl(req)}/r/${room.id}`
         }
@@ -293,21 +468,49 @@ async function handleA2ATasksSend(
   );
 
   if (!task) {
-    res.json({
-      jsonrpc: "2.0",
-      id: rpcId,
-      error: { code: -32602, message: "Task description is required. Provide 'description' or 'task' in params." }
-    });
+    jsonRpcError(
+      res,
+      200,
+      rpcId,
+      -32602,
+      "Task description is required. Provide 'description' or 'task' in params."
+    );
     return;
   }
 
   const subnest = normalizeText(taskDef.subnest, 40) || "general";
   if (!getSubNest(subnest)) {
-    res.json({
-      jsonrpc: "2.0",
-      id: rpcId,
-      error: { code: -32602, message: `Unknown subnest: ${subnest}` }
-    });
+    jsonRpcError(res, 200, rpcId, -32602, `Unknown subnest: ${subnest}`);
+    return;
+  }
+
+  const pythonShellEnabledResult = parseBooleanField(
+    taskDef.pythonShellEnabled,
+    "pythonShellEnabled",
+    true
+  );
+  if (!pythonShellEnabledResult.ok) {
+    jsonRpcError(res, 400, rpcId, -32602, pythonShellEnabledResult.error);
+    return;
+  }
+
+  const webSearchEnabledResult = parseBooleanField(
+    taskDef.webSearchEnabled,
+    "webSearchEnabled",
+    true
+  );
+  if (!webSearchEnabledResult.ok) {
+    jsonRpcError(res, 400, rpcId, -32602, webSearchEnabledResult.error);
+    return;
+  }
+
+  const endpointUrlResult = parseOptionalHttpUrl(
+    taskDef.endpointUrl ?? taskDef.endpoint_url,
+    "endpointUrl",
+    250
+  );
+  if (!endpointUrlResult.ok) {
+    jsonRpcError(res, 400, rpcId, -32602, endpointUrlResult.error);
     return;
   }
 
@@ -315,8 +518,8 @@ async function handleA2ATasksSend(
     name,
     task,
     agentIds: [],
-    pythonShellEnabled: Boolean(taskDef.pythonShellEnabled ?? true),
-    webSearchEnabled: Boolean(taskDef.webSearchEnabled ?? true),
+    pythonShellEnabled: pythonShellEnabledResult.value,
+    webSearchEnabled: webSearchEnabledResult.value,
     subnest
   });
 
@@ -324,22 +527,31 @@ async function handleA2ATasksSend(
     taskDef.agentName ?? (params as Record<string, unknown>).agentName ?? "",
     80
   );
+  const agentId = normalizeText(
+    taskDef.agentId ?? (params as Record<string, unknown>).agentId ?? "",
+    120
+  );
   let joinedAgent: ConnectedAgent | null = null;
 
-  if (agentName) {
+  if (agentName || agentId) {
     joinedAgent = {
-      id: newId(),
-      name: agentName,
+      id: agentId || newId(),
+      name: agentName || `A2A-${(agentId || newId()).slice(0, 6)}`,
       owner: normalizeText(taskDef.owner, 80) || "a2a",
-      endpointUrl: normalizeText(taskDef.endpointUrl, 250),
+      endpointUrl: endpointUrlResult.value,
       note: "Created room via A2A tasks/send",
       joinedAt: nowIso()
-    } as ConnectedAgent;
+    };
 
     room.connectedAgents.push(joinedAgent);
     room.agentIds.push(joinedAgent.id);
     room.timeline.push(
-      newSystemEvent(room.id, "open_room", "agent_joined", `${agentName} created and joined via A2A`)
+      newSystemEvent(
+        room.id,
+        "open_room",
+        "agent_joined",
+        `${joinedAgent.name} created and joined via A2A`
+      )
     );
     await store.saveRoom(room);
   }
@@ -408,25 +620,23 @@ async function handleA2ATasksGet(
 ): Promise<void> {
   const taskId = normalizeText(params.id ?? params.taskId ?? params.roomId, 120);
   if (!taskId) {
-    res.json({
-      jsonrpc: "2.0",
-      id: rpcId,
-      error: { code: -32602, message: "Missing task/room ID. Provide 'id', 'taskId', or 'roomId'." }
-    });
+    jsonRpcError(
+      res,
+      200,
+      rpcId,
+      -32602,
+      "Missing task/room ID. Provide 'id', 'taskId', or 'roomId'."
+    );
     return;
   }
 
   const room = await store.getRoom(taskId);
   if (!room) {
-    res.json({
-      jsonrpc: "2.0",
-      id: rpcId,
-      error: { code: -32602, message: `Task/room not found: ${taskId}` }
-    });
+    jsonRpcError(res, 200, rpcId, -32602, `Task/room not found: ${taskId}`);
     return;
   }
 
-  const chatMessages = room.timeline.filter(e => e.envelope.message_type === "chat");
+  const chatMessages = room.timeline.filter((event) => event.envelope.message_type === "chat");
   res.json({
     jsonrpc: "2.0",
     id: rpcId,
@@ -443,13 +653,13 @@ async function handleA2ATasksGet(
         roomName: room.name,
         task: room.task,
         phase: room.phase,
-        agents: room.connectedAgents.map(a => a.name),
-        messageCount: chatMessages.length,
-        recentMessages: chatMessages.slice(-10).map(e => ({
-          id: e.id,
-          from: e.envelope.from_agent,
-          text: e.envelope.explanation,
-          timestamp: e.timestamp
+        agents: room.connectedAgents.map((agent) => agent.name),
+        messageCount: room.messageCount ?? chatMessages.length,
+        recentMessages: chatMessages.slice(-10).map((event) => ({
+          id: event.id,
+          from: event.envelope.from_agent,
+          text: event.envelope.explanation,
+          timestamp: event.timestamp
         }))
       }
     }

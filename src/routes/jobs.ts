@@ -266,7 +266,14 @@ export function createJobsRouter(
       res.status(404).json({ error: "room not found" });
       return;
     }
-    res.json({ value: room.pythonJobs });
+
+    const reconciled = reconcilePythonJobs(room.pythonJobs, pythonJobs.listByRoom(room.id));
+    if (reconciled.changed) {
+      room.pythonJobs = reconciled.jobs;
+      await store.saveRoom(room);
+    }
+
+    res.json({ value: reconciled.jobs });
   });
 
   router.get("/rooms/:roomId/python-jobs/:jobId", async (req, res) => {
@@ -275,7 +282,14 @@ export function createJobsRouter(
       res.status(404).json({ error: "room not found" });
       return;
     }
-    const job = room.pythonJobs.find((j) => j.id === req.params.jobId)
+
+    const reconciled = reconcilePythonJobs(room.pythonJobs, pythonJobs.listByRoom(room.id));
+    if (reconciled.changed) {
+      room.pythonJobs = reconciled.jobs;
+      await store.saveRoom(room);
+    }
+
+    const job = reconciled.jobs.find((j) => j.id === req.params.jobId)
       ?? pythonJobs.get(req.params.jobId);
     if (!job) {
       res.status(404).json({ error: "python job not found" });
@@ -378,4 +392,63 @@ function resolveAgentInRoom(
   const byName = room.connectedAgents.find((a) => a.name === agentName);
   if (byName) return { id: byName.id, name: byName.name };
   return null;
+}
+
+function reconcilePythonJobs(
+  persistedJobs: RoomSnapshot["pythonJobs"],
+  runtimeJobs: RoomSnapshot["pythonJobs"]
+): { jobs: RoomSnapshot["pythonJobs"]; changed: boolean } {
+  const byId = new Map<string, RoomSnapshot["pythonJobs"][number]>();
+  for (const job of persistedJobs) {
+    byId.set(job.id, job);
+  }
+
+  let changed = false;
+
+  for (const runtimeJob of runtimeJobs) {
+    const current = byId.get(runtimeJob.id);
+    if (!current) {
+      byId.set(runtimeJob.id, runtimeJob);
+      changed = true;
+      continue;
+    }
+
+    if (shouldPreferRuntimeJob(current, runtimeJob)) {
+      byId.set(runtimeJob.id, runtimeJob);
+      changed = true;
+    }
+  }
+
+  const merged = Array.from(byId.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (!changed && merged.length !== persistedJobs.length) {
+    changed = true;
+  }
+
+  return { jobs: merged, changed };
+}
+
+function shouldPreferRuntimeJob(
+  persisted: RoomSnapshot["pythonJobs"][number],
+  runtime: RoomSnapshot["pythonJobs"][number]
+): boolean {
+  if (persisted.status !== runtime.status) {
+    if (persisted.status === "running" && runtime.status !== "running") {
+      return true;
+    }
+    if (persisted.status === "queued" && runtime.status !== "queued") {
+      return true;
+    }
+  }
+
+  if (!persisted.finishedAt && runtime.finishedAt) {
+    return true;
+  }
+  if ((persisted.exitCode ?? null) !== (runtime.exitCode ?? null)) {
+    return true;
+  }
+  if ((persisted.error || "") !== (runtime.error || "")) {
+    return true;
+  }
+
+  return false;
 }

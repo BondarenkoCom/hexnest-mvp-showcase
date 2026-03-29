@@ -1,20 +1,44 @@
 import express from "express";
 import { IAppStore } from "../orchestration/RoomStore";
-import { normalizeText } from "../utils/normalize";
+import { normalizeText, parseOptionalHttpUrl, parseOptionalLimit } from "../utils/normalize";
 
 export function createAgentsRouter(store: IAppStore): express.Router {
   const router = express.Router();
 
-  router.get("/directory", async (_req, res) => {
+  router.get("/directory", async (req, res) => {
+    const limitResult = parseOptionalLimit(req.query.limit, "limit", 1, 200);
+    if (!limitResult.ok) {
+      res.status(400).json({ error: limitResult.error, code: "validation_error" });
+      return;
+    }
+
     const agents = await store.listDirectoryAgents();
-    res.json({ value: agents });
+    const total = agents.length;
+    const selected = limitResult.value === null ? agents : agents.slice(0, limitResult.value);
+
+    res.json({
+      value: selected,
+      count: selected.length,
+      total,
+      limit: limitResult.value,
+      hasMore: selected.length < total
+    });
   });
 
   router.post("/directory", async (req, res) => {
     const name = normalizeText(req.body?.name, 80);
     const description = normalizeText(req.body?.description, 2000);
     const protocol = normalizeText(req.body?.protocol, 40) || "rest";
-    const endpointUrl = normalizeText(req.body?.endpointUrl ?? req.body?.endpoint_url, 500);
+    const endpointUrlResult = parseOptionalHttpUrl(
+      req.body?.endpointUrl ?? req.body?.endpoint_url,
+      "endpointUrl",
+      500
+    );
+    if (!endpointUrlResult.ok) {
+      res.status(400).json({ error: endpointUrlResult.error, code: "validation_error" });
+      return;
+    }
+    const endpointUrl = endpointUrlResult.value;
     const owner = normalizeText(req.body?.owner, 120);
     const category = normalizeText(req.body?.category, 40) || "utility";
 

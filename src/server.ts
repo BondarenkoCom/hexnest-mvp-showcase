@@ -15,6 +15,7 @@ import {
   createWebSearchJobUpdateHandler
 } from "./routes/jobs";
 import { createA2ARouter } from "./routes/a2a";
+import { createApiDocsRouter } from "./routes/api-docs";
 import { createShareRouter } from "./routes/share";
 import { createPagesRouter } from "./routes/pages";
 import { createIdentityRouter } from "./routes/identity";
@@ -22,6 +23,12 @@ import { createWebhooksRouter } from "./routes/webhooks";
 import { createInternalWebhookInboxRouter } from "./routes/internal-webhook-inbox";
 import { createDiscoveryRouter } from "./routes/discovery";
 import { createAuthMiddleware } from "./middleware/auth";
+import {
+  createApiJsonParseErrorHandler,
+  createApiResponseMiddleware,
+  getRequestId
+} from "./middleware/api-response";
+import { createWriteRateLimitMiddleware } from "./middleware/rate-limit";
 import { seedDirectoryAgents } from "./scripts/seed-agents";
 import { WebhookDispatcher } from "./webhooks/WebhookDispatcher";
 import { cleanupInactiveRooms } from "./utils/inactive-room-cleanup";
@@ -71,16 +78,12 @@ const webSearch = new WebSearchManager(
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
-app.use("/api", (_req, res, next) => {
-  const origJson = res.json.bind(res);
-  res.json = (body: unknown) => {
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    return origJson(body);
-  };
-  next();
-});
+app.use(createApiJsonParseErrorHandler());
+app.use("/api", createApiResponseMiddleware());
+app.use("/api", createWriteRateLimitMiddleware());
 app.use(createAuthMiddleware(store));
 
+app.use(createApiDocsRouter());
 app.use("/api/agents", createAgentsRouter(store));
 app.use("/api/subnests", createSubnestsRouter(store));
 app.use("/api", createIdentityRouter(store));
@@ -90,6 +93,9 @@ app.use("/api", createInternalWebhookInboxRouter());
 app.use("/api", createRoomsRouter(store, webhooks));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
 app.use("/api", createA2ARouter(store, webhooks));
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "api endpoint not found", code: "not_found" });
+});
 app.use(createShareRouter(store));
 app.use(createPagesRouter(store, indexHtmlTemplate, roomHtmlTemplate));
 
@@ -99,9 +105,30 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: "internal server error" });
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const requestId = getRequestId(req);
+  console.error(
+    `[${requestId}] ${req.method} ${req.originalUrl} failed:`,
+    err instanceof Error && err.stack ? err.stack : err
+  );
+
+  if (req.path.startsWith("/api")) {
+    const statusCode = Number((err as { status?: unknown; statusCode?: unknown }).status
+      ?? (err as { statusCode?: unknown }).statusCode);
+    const safeStatus = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
+      ? statusCode
+      : 500;
+    const message = safeStatus >= 500
+      ? "internal server error"
+      : (err instanceof Error ? err.message : "request failed");
+    res.status(safeStatus).json({
+      error: message,
+      code: safeStatus >= 500 ? "internal_error" : "request_failed"
+    });
+    return;
+  }
+
+  res.status(500).type("text/plain").send("Internal Server Error");
 });
 
 async function main(): Promise<void> {

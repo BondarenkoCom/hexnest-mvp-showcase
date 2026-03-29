@@ -21,6 +21,15 @@ describe("POST /api/a2a", () => {
     app = buildApp(store);
   });
 
+  it("GET /api/a2a returns machine-readable method catalog", async () => {
+    const res = await request(app).get("/api/a2a");
+
+    expect(res.status).toBe(200);
+    expect(res.body.jsonrpc).toBe("2.0");
+    expect(res.body.methods).toBeDefined();
+    expect(res.body.methods["message/send"]).toBeDefined();
+  });
+
   // ── JSON-RPC validation ──
 
   it("returns -32600 for missing jsonrpc field", async () => {
@@ -61,6 +70,37 @@ describe("POST /api/a2a", () => {
   // ── message/send ──
 
   it("message/send without roomId returns available rooms list", async () => {
+    const room = await store.createRoom({
+      name: "Count Room",
+      task: "count messages",
+      agentIds: [],
+      pythonShellEnabled: false,
+      webSearchEnabled: false,
+      subnest: "general"
+    });
+    room.timeline.push({
+      id: "msg-1",
+      timestamp: new Date().toISOString(),
+      phase: "open_room",
+      envelope: {
+        message_type: "chat",
+        from_agent: "Aya-9X",
+        to_agent: "room",
+        scope: "room",
+        triggered_by: null,
+        task_id: room.id,
+        intent: "test",
+        artifacts: [],
+        status: "ok",
+        confidence: 0.8,
+        assumptions: [],
+        risks: [],
+        need_human: false,
+        explanation: "hello"
+      }
+    });
+    await store.saveRoom(room);
+
     const res = await request(app)
       .post("/api/a2a")
       .send({ jsonrpc: "2.0", id: 1, method: "message/send", params: {} });
@@ -68,6 +108,7 @@ describe("POST /api/a2a", () => {
     expect(res.status).toBe(200);
     expect(res.body.result.type).toBe("message");
     expect(res.body.result.metadata.availableRooms).toBeInstanceOf(Array);
+    expect(res.body.result.metadata.availableRooms[0].messages).toBeGreaterThan(0);
   });
 
   it("message/send with unknown roomId returns -32602 error", async () => {
@@ -139,6 +180,101 @@ describe("POST /api/a2a", () => {
     expect(res.body.result.metadata.agentName).toBe("Lurker");
   });
 
+  it("message/send reuses identity by agentId and does not create duplicates", async () => {
+    const room = await store.createRoom({
+      name: "Identity Room",
+      task: "check identity",
+      agentIds: [],
+      pythonShellEnabled: false,
+      webSearchEnabled: false,
+      subnest: "general"
+    });
+
+    const first = await request(app).post("/api/a2a").send({
+      jsonrpc: "2.0",
+      id: "join-1",
+      method: "message/send",
+      params: {
+        message: {
+          roomId: room.id,
+          agentId: "agent-007",
+          agentName: "Aya",
+          text: "hello"
+        }
+      }
+    });
+
+    expect(first.status).toBe(200);
+    expect(first.body.result.metadata.agentId).toBe("agent-007");
+
+    const second = await request(app).post("/api/a2a").send({
+      jsonrpc: "2.0",
+      id: "join-2",
+      method: "message/send",
+      params: {
+        message: {
+          roomId: room.id,
+          agentId: "agent-007",
+          agentName: "Aya-Renamed",
+          text: "second"
+        }
+      }
+    });
+
+    expect(second.status).toBe(200);
+    expect(second.body.result.metadata.agentId).toBe("agent-007");
+
+    const roomState = await store.getRoom(room.id);
+    expect(roomState?.connectedAgents).toHaveLength(1);
+    expect(roomState?.connectedAgents[0].id).toBe("agent-007");
+  });
+
+  it("message/send applies direct routing fields", async () => {
+    const room = await store.createRoom({
+      name: "Direct Room",
+      task: "direct route",
+      agentIds: [],
+      pythonShellEnabled: false,
+      webSearchEnabled: false,
+      subnest: "general"
+    });
+
+    room.connectedAgents.push({
+      id: "target-1",
+      name: "TargetAgent",
+      owner: "test",
+      endpointUrl: "",
+      note: "",
+      joinedAt: new Date().toISOString()
+    });
+    await store.saveRoom(room);
+
+    const res = await request(app).post("/api/a2a").send({
+      jsonrpc: "2.0",
+      id: "direct-1",
+      method: "message/send",
+      params: {
+        message: {
+          roomId: room.id,
+          agentId: "sender-1",
+          agentName: "Sender",
+          scope: "direct",
+          toAgentName: "TargetAgent",
+          text: "private ping"
+        }
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.metadata.scope).toBe("direct");
+    expect(res.body.result.metadata.toAgent).toBe("TargetAgent");
+
+    const roomState = await store.getRoom(room.id);
+    const chat = roomState?.timeline.find((event) => event.envelope.explanation === "private ping");
+    expect(chat?.envelope.scope).toBe("direct");
+    expect(chat?.envelope.to_agent).toBe("TargetAgent");
+  });
+
   // ── tasks/send ──
 
   it("tasks/send without description returns -32602 error", async () => {
@@ -167,6 +303,23 @@ describe("POST /api/a2a", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(res.body.error.code).toBe(-32602);
+  });
+
+  it("tasks/send rejects string booleans", async () => {
+    const res = await request(app).post("/api/a2a").send({
+      jsonrpc: "2.0",
+      id: 55,
+      method: "tasks/send",
+      params: {
+        task: {
+          description: "strict booleans",
+          pythonShellEnabled: "true"
+        }
+      }
+    });
+
+    expect(res.status).toBe(400);
     expect(res.body.error.code).toBe(-32602);
   });
 

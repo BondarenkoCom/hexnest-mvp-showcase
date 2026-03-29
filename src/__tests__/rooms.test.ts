@@ -72,6 +72,16 @@ describe("POST /api/rooms", () => {
     expect(res.body.subnest).toBe("ai");
   });
 
+  it("rejects string booleans for room settings", async () => {
+    const res = await request(app).post("/api/rooms").send({
+      task: "Debate AI",
+      pythonShellEnabled: "true"
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/boolean/i);
+  });
+
   it("auto-generates a room name when name is omitted", async () => {
     const res = await request(app).post("/api/rooms").send({ task: "Some task" });
     expect(res.status).toBe(201);
@@ -93,6 +103,47 @@ describe("GET /api/rooms", () => {
     await store.createRoom({ name: "R2", task: "t2", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
     const res = await request(buildApp(store)).get("/api/rooms");
     expect(res.body.value).toHaveLength(2);
+  });
+
+  it("applies limit query parameter", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    await store.createRoom({ name: "R1", task: "t1", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    await store.createRoom({ name: "R2", task: "t2", agentIds: [], pythonShellEnabled: false, webSearchEnabled: false, subnest: "general" });
+    const res = await request(buildApp(store)).get("/api/rooms?limit=1");
+    expect(res.status).toBe(200);
+    expect(res.body.value).toHaveLength(1);
+    expect(res.body.limit).toBe(1);
+    expect(res.body.hasMore).toBe(true);
+  });
+
+  it("returns pythonJobsCount from aggregate even in list mode", async () => {
+    const store = new SQLiteRoomStore(tempDbPath());
+    const room = await store.createRoom({
+      name: "Jobs Room",
+      task: "jobs",
+      agentIds: [],
+      pythonShellEnabled: true,
+      webSearchEnabled: false,
+      subnest: "general"
+    });
+    room.pythonJobs.push({
+      id: "job-1",
+      roomId: room.id,
+      agentId: "agent-1",
+      agentName: "Agent",
+      status: "done",
+      code: "print(1)",
+      createdAt: new Date().toISOString(),
+      timeoutSec: 10,
+      finishedAt: new Date().toISOString(),
+      exitCode: 0,
+      stdout: "1"
+    });
+    await store.saveRoom(room);
+
+    const res = await request(buildApp(store)).get("/api/rooms?limit=10");
+    expect(res.status).toBe(200);
+    expect(res.body.value[0].pythonJobsCount).toBe(1);
   });
 });
 
@@ -141,6 +192,14 @@ describe("POST /api/rooms/:roomId/agents", () => {
     expect(res.status).toBe(201);
     expect(res.body.joinedAgent.name).toBe("AgentX");
     expect(res.body.roomId).toBe(roomId);
+  });
+
+  it("rejects invalid endpointUrl", async () => {
+    const res = await request(app)
+      .post(`/api/rooms/${roomId}/agents`)
+      .send({ name: "AgentX", endpointUrl: "not-a-url" });
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/url/i);
   });
 
   it("returns ok:true with alreadyJoined when agent joins twice", async () => {
@@ -219,6 +278,45 @@ describe("POST /api/rooms/:roomId/messages", () => {
     expect(res.status).toBe(200);
     const texts = res.body.messages.map((m: { text: string }) => m.text);
     expect(texts).toContain("Test message");
+  });
+
+  it("rejects non-boolean needHuman", async () => {
+    const res = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId, text: "hello", needHuman: "true" });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/boolean/i);
+  });
+
+  it("filters messages by scope=direct|room", async () => {
+    const secondAgent = await request(app)
+      .post(`/api/rooms/${roomId}/agents`)
+      .send({ name: "Listener" });
+
+    await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({ agentId, text: "public", scope: "room" });
+
+    await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .send({
+        agentId,
+        text: "private",
+        scope: "direct",
+        toAgentId: secondAgent.body.joinedAgent.id
+      });
+
+    const directRes = await request(app).get(`/api/rooms/${roomId}/messages?scope=direct`);
+    expect(directRes.status).toBe(200);
+    expect(directRes.body.messages).toHaveLength(1);
+    expect(directRes.body.messages[0].scope).toBe("direct");
+
+    const roomRes = await request(app).get(`/api/rooms/${roomId}/messages?scope=room`);
+    expect(roomRes.status).toBe(200);
+    const roomTexts = roomRes.body.messages.map((m: { text: string }) => m.text);
+    expect(roomTexts).toContain("public");
+    expect(roomTexts).not.toContain("private");
   });
 });
 

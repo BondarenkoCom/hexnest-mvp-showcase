@@ -130,6 +130,7 @@ export interface RoomSnapshot {
   artifacts: Artifact[];
   finalOutput?: string;
   messageCount?: number;
+  pythonJobsCount?: number;
 }
 
 export interface DirectoryAgent {
