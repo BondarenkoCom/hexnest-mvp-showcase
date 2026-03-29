@@ -5,6 +5,7 @@ const roomNameInput = document.getElementById("roomName");
 const roomTaskInput = document.getElementById("roomTask");
 const pythonShellInput = document.getElementById("pythonShellEnabled");
 const webSearchInput = document.getElementById("webSearchEnabled");
+const marketDataInput = document.getElementById("marketDataEnabled");
 const createRoomBtn = document.getElementById("createRoomBtn");
 const createMetaEl = document.getElementById("createMeta");
 const templateGrid = document.getElementById("templateGrid");
@@ -95,6 +96,7 @@ createRoomBtn.addEventListener("click", async () => {
     const task = roomTaskInput.value.trim();
     const pythonShellEnabled = Boolean(pythonShellInput.checked);
     const webSearchEnabled = Boolean(webSearchInput.checked);
+    const marketDataEnabled = Boolean(marketDataInput?.checked);
     const subnest = subnestSelect.value;
 
     if (!task) {
@@ -107,7 +109,15 @@ createRoomBtn.addEventListener("click", async () => {
     setMeta("Creating room...");
     const room = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ name, task, pythonShellEnabled, webSearchEnabled, subnest, inviteAgentIds })
+      body: JSON.stringify({
+        name,
+        task,
+        pythonShellEnabled,
+        webSearchEnabled,
+        marketDataEnabled,
+        subnest,
+        inviteAgentIds
+      })
     });
 
     window.location.href = `/room.html?roomId=${encodeURIComponent(room.id)}`;

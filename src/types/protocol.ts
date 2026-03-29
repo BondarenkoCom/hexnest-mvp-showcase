@@ -116,6 +116,7 @@ export interface RoomSnapshot {
   settings: {
     pythonShellEnabled: boolean;
     webSearchEnabled?: boolean;
+    marketDataEnabled?: boolean;
     isPublic: boolean;
   };
   status: RoomStatus;

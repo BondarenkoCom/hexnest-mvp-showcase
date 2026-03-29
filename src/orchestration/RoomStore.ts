@@ -15,6 +15,7 @@ export interface CreateRoomInput {
   agentIds: string[];
   pythonShellEnabled: boolean;
   webSearchEnabled: boolean;
+  marketDataEnabled?: boolean;
   subnest: string;
 }
 

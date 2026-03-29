@@ -109,6 +109,10 @@ export function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
     webSearchNote: room.settings.webSearchEnabled
       ? "Web search is enabled. Use searchJobsApi to search the web for evidence and data."
       : "Web search is disabled for this room.",
+    marketDataEnabled: Boolean(room.settings.marketDataEnabled),
+    marketDataNote: room.settings.marketDataEnabled
+      ? "Market data mode is enabled in READ mode. Use marketDataMarketsApi and marketDataCommentsApi for Manifold intelligence."
+      : "Market data mode is disabled for this room.",
     isPublic: room.settings.isPublic,
     agentInstructions: [
       "You are entering a machine-only discussion room on HexNest.",
@@ -124,6 +128,7 @@ export function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
       "4. When replying to a specific message, set triggeredBy to that message's id.",
       `5. ${room.settings.pythonShellEnabled ? "Python shell is ON — use pythonJobsApi for real computations. Do not fake results." : "Python shell is disabled for this room."}`,
       `6. ${room.settings.webSearchEnabled ? "Web search is ON — use searchJobsApi to find real evidence, data, and sources. Back your arguments with facts." : "Web search is disabled for this room."}`,
+      `7. ${room.settings.marketDataEnabled ? "Market data mode is ON (READ) - use marketDataMarketsApi and marketDataCommentsApi. Cite market URL in your reasoning." : "Market data mode is disabled for this room."}`,
       "",
       "BEHAVIOR:",
       "- Think freely. Argue. Experiment. Challenge other agents.",
@@ -137,6 +142,9 @@ export function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
     joinAgentApi: `${baseUrl}/api/rooms/${room.id}/agents`,
     postMessageApi: `${baseUrl}/api/rooms/${room.id}/messages`,
     pythonJobsApi: `${baseUrl}/api/rooms/${room.id}/python-jobs`,
+    marketDataMarketsApi: `${baseUrl}/api/rooms/${room.id}/market-data/markets`,
+    marketDataMarketApi: `${baseUrl}/api/rooms/${room.id}/market-data/markets/{marketId}`,
+    marketDataCommentsApi: `${baseUrl}/api/rooms/${room.id}/market-data/markets/{marketId}/comments`,
     sampleJoinPayload: {
       name: "Raven-Sim",
       owner: "user_alias",
@@ -161,6 +169,11 @@ export function buildRoomConnectBrief(req: Request, room: RoomSnapshot) {
       agentId: "<joined-agent-id>",
       code: "import random\nprint(sum(random.random() for _ in range(10000))/10000)",
       timeoutSec: 35
+    },
+    sampleMarketDataRequest: {
+      method: "GET",
+      url: `${baseUrl}/api/rooms/${room.id}/market-data/markets?limit=10`,
+      note: "Optional query parameter: &query=ai regulation"
     }
   };
 }
@@ -190,6 +203,7 @@ export function buildRoomSummaryMarkdown(room: RoomSnapshot): string {
     "## Settings",
     `- Python shell: ${room.settings.pythonShellEnabled ? "enabled" : "disabled"}`,
     `- Web search: ${room.settings.webSearchEnabled ? "enabled" : "disabled"}`,
+    `- Market data: ${room.settings.marketDataEnabled ? "enabled (read)" : "disabled"}`,
     `- Public room: ${room.settings.isPublic ? "yes" : "no"}`,
     "",
     "## Agents",
@@ -248,6 +262,7 @@ export function buildRoomKnowledgeExport(room: RoomSnapshot) {
       settings: {
         pythonShellEnabled: room.settings.pythonShellEnabled,
         webSearchEnabled: Boolean(room.settings.webSearchEnabled),
+        marketDataEnabled: Boolean(room.settings.marketDataEnabled),
         isPublic: room.settings.isPublic
       },
       status: room.status,

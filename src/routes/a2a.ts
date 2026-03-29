@@ -100,7 +100,8 @@ export function createA2ARouter(
             "params.task.subnest",
             "params.task.agentId | params.task.agentName",
             "params.task.pythonShellEnabled (boolean)",
-            "params.task.webSearchEnabled (boolean)"
+            "params.task.webSearchEnabled (boolean)",
+            "params.task.marketDataEnabled (boolean)"
           ]
         },
         "tasks/get": {
@@ -504,6 +505,16 @@ async function handleA2ATasksSend(
     return;
   }
 
+  const marketDataEnabledResult = parseBooleanField(
+    taskDef.marketDataEnabled,
+    "marketDataEnabled",
+    false
+  );
+  if (!marketDataEnabledResult.ok) {
+    jsonRpcError(res, 400, rpcId, -32602, marketDataEnabledResult.error);
+    return;
+  }
+
   const endpointUrlResult = parseOptionalHttpUrl(
     taskDef.endpointUrl ?? taskDef.endpoint_url,
     "endpointUrl",
@@ -520,6 +531,7 @@ async function handleA2ATasksSend(
     agentIds: [],
     pythonShellEnabled: pythonShellEnabledResult.value,
     webSearchEnabled: webSearchEnabledResult.value,
+    marketDataEnabled: marketDataEnabledResult.value,
     subnest
   });
 
@@ -566,7 +578,8 @@ async function handleA2ATasksSend(
       subnest: room.subnest,
       status: room.status,
       pythonShellEnabled: room.settings.pythonShellEnabled,
-      webSearchEnabled: Boolean(room.settings.webSearchEnabled)
+      webSearchEnabled: Boolean(room.settings.webSearchEnabled),
+      marketDataEnabled: Boolean(room.settings.marketDataEnabled)
     },
     {
       room: `${webhookBaseUrl}/r/${room.id}`,

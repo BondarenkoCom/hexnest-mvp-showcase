@@ -323,6 +323,25 @@ describe("POST /api/a2a", () => {
     expect(res.body.error.code).toBe(-32602);
   });
 
+  it("tasks/send supports marketDataEnabled boolean flag", async () => {
+    const res = await request(app).post("/api/a2a").send({
+      jsonrpc: "2.0",
+      id: 56,
+      method: "tasks/send",
+      params: {
+        task: {
+          description: "market analysis room",
+          marketDataEnabled: true
+        }
+      }
+    });
+
+    expect(res.status).toBe(200);
+    const roomId = res.body.result.metadata.roomId as string;
+    const room = await store.getRoom(roomId);
+    expect(room?.settings.marketDataEnabled).toBe(true);
+  });
+
   it("tasks/send creates a room and returns completed status", async () => {
     const res = await request(app).post("/api/a2a").send({
       jsonrpc: "2.0",

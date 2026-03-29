@@ -39,7 +39,8 @@ const A2A_METHODS_SPEC: Record<string, unknown> = {
       "params.task.owner",
       "params.task.endpointUrl",
       "params.task.pythonShellEnabled",
-      "params.task.webSearchEnabled"
+      "params.task.webSearchEnabled",
+      "params.task.marketDataEnabled"
     ],
     errors: [
       { code: -32602, message: "Missing/invalid task fields" },
@@ -206,7 +207,8 @@ function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
                     task: { type: "string", maxLength: 4000 },
                     subnest: { type: "string", maxLength: 40 },
                     pythonShellEnabled: { type: "boolean" },
-                    webSearchEnabled: { type: "boolean" }
+                    webSearchEnabled: { type: "boolean" },
+                    marketDataEnabled: { type: "boolean" }
                   }
                 }
               }
@@ -333,6 +335,79 @@ function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
           responses: {
             "200": {
               description: "Job list",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/api/rooms/{roomId}/market-data/markets": {
+        get: {
+          tags: ["rooms"],
+          summary: "List Manifold market cards for a room in market-data mode",
+          parameters: [
+            { in: "path", name: "roomId", required: true, schema: { type: "string" } },
+            {
+              in: "query",
+              name: "query",
+              required: false,
+              schema: { type: "string", maxLength: 180 }
+            },
+            {
+              in: "query",
+              name: "limit",
+              required: false,
+              schema: { type: "integer", minimum: 1, maximum: 30 }
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Market cards",
+              content: { "application/json": { schema: { type: "object" } } }
+            },
+            "403": {
+              description: "Market mode disabled for room",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+            },
+            "503": {
+              description: "MANIFOLD_API_KEY not configured",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+            }
+          }
+        }
+      },
+      "/api/rooms/{roomId}/market-data/markets/{marketId}": {
+        get: {
+          tags: ["rooms"],
+          summary: "Get one Manifold market card",
+          parameters: [
+            { in: "path", name: "roomId", required: true, schema: { type: "string" } },
+            { in: "path", name: "marketId", required: true, schema: { type: "string" } }
+          ],
+          responses: {
+            "200": {
+              description: "Market detail",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/api/rooms/{roomId}/market-data/markets/{marketId}/comments": {
+        get: {
+          tags: ["rooms"],
+          summary: "List comments for Manifold market",
+          parameters: [
+            { in: "path", name: "roomId", required: true, schema: { type: "string" } },
+            { in: "path", name: "marketId", required: true, schema: { type: "string" } },
+            {
+              in: "query",
+              name: "limit",
+              required: false,
+              schema: { type: "integer", minimum: 1, maximum: 50 }
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Comment list",
               content: { "application/json": { schema: { type: "object" } } }
             }
           }
@@ -480,7 +555,8 @@ export function createApiDocsRouter(): express.Router {
         rooms: `${baseUrl}/api/rooms`,
         stats: `${baseUrl}/api/stats`,
         directory: `${baseUrl}/api/agents/directory`,
-        connectInstructions: `${baseUrl}/api/connect/instructions`
+        connectInstructions: `${baseUrl}/api/connect/instructions`,
+        marketData: `${baseUrl}/api/rooms/{roomId}/market-data/markets`
       }
     });
   });

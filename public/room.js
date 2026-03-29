@@ -6,13 +6,18 @@ const roomStatusTextEl = document.getElementById("roomStatusText");
 const roomViewerCountEl = document.getElementById("roomViewerCount");
 const roomPhaseChipEl = document.getElementById("roomPhaseChip");
 const roomShellChipEl = document.getElementById("roomShellChip");
+const roomMarketChipEl = document.getElementById("roomMarketChip");
 const roomConnectBriefEl = document.getElementById("roomConnectBrief");
 const roomMetaEl = document.getElementById("roomMeta");
+const marketMetaEl = document.getElementById("marketMeta");
 const roomStatsBadgeEl = document.getElementById("roomStatsBadge");
 const roomStatsPanelEl = document.getElementById("roomStatsPanel");
 const liveTimelineEl = document.getElementById("liveTimeline");
+const marketDataPaneEl = document.getElementById("marketDataPane");
+const marketCardsEl = document.getElementById("marketCards");
 const artifactListEl = document.getElementById("artifactList");
 const refreshRoomBtn = document.getElementById("refreshRoomBtn");
+const refreshMarketBtn = document.getElementById("refreshMarketBtn");
 const forkRoomBtn = document.getElementById("forkRoomBtn");
 const summaryRoomBtn = document.getElementById("summaryRoomBtn");
 const exportRoomBtn = document.getElementById("exportRoomBtn");
@@ -42,12 +47,18 @@ let eventReplayTimer = null;
 let pollTimer = null;
 let heartbeatTimer = null;
 let sharedMessageFocused = false;
+let latestRoom = null;
 const shareLinkCache = new Map();
 
 init().catch(handleError);
 
 refreshRoomBtn?.addEventListener("click", async () => {
   await refreshRoom();
+});
+
+refreshMarketBtn?.addEventListener("click", async () => {
+  if (!latestRoom) return;
+  await refreshMarketData(latestRoom, true);
 });
 
 forkRoomBtn?.addEventListener("click", async () => {
@@ -264,8 +275,10 @@ function hideLoader() {
 
 async function refreshRoom(showMeta = true) {
   try {
-    const [room, brief, stats] = await Promise.all([
-      api(`/api/rooms/${encodeURIComponent(roomId)}`),
+    const room = await api(`/api/rooms/${encodeURIComponent(roomId)}`);
+    latestRoom = room;
+
+    const [brief, stats] = await Promise.all([
       api(`/api/rooms/${encodeURIComponent(roomId)}/connect`),
       api(`/api/rooms/${encodeURIComponent(roomId)}/stats`).catch(() => null)
     ]);
@@ -278,6 +291,7 @@ async function refreshRoom(showMeta = true) {
     renderArtifacts(room.artifacts || []);
     renderJoinedAgents(room.connectedAgents || []);
     renderPythonJobs(room.pythonJobs || []);
+    await refreshMarketData(room);
     await populateRoomsNav("roomNavList", roomId);
 
     if (showMeta) {
@@ -492,6 +506,115 @@ function renderArtifacts(artifacts) {
   });
 }
 
+async function refreshMarketData(room, announce = false) {
+  if (!marketCardsEl || !marketMetaEl || !marketDataPaneEl) {
+    return;
+  }
+
+  const enabled = Boolean(room?.settings?.marketDataEnabled);
+  if (!enabled) {
+    marketDataPaneEl.classList.add("market-pane-disabled");
+    marketMetaEl.textContent = "Market data mode is disabled for this room.";
+    marketCardsEl.innerHTML = `<div class="market-card empty-card"><p class="line-body">Enable "Market Data (Manifold)" when creating the room.</p></div>`;
+    return;
+  }
+
+  marketDataPaneEl.classList.remove("market-pane-disabled");
+  const query = deriveMarketQuery(room?.task || "");
+  const endpoint = `/api/rooms/${encodeURIComponent(room.id)}/market-data/markets?limit=12${
+    query ? `&query=${encodeURIComponent(query)}` : ""
+  }`;
+
+  try {
+    marketMetaEl.textContent = "Loading market intelligence...";
+    const payload = await api(endpoint);
+    const rows = Array.isArray(payload.value) ? payload.value : [];
+    const fetchedAt = payload.fetchedAt ? new Date(payload.fetchedAt).toLocaleTimeString() : "now";
+    const queryLabel = payload.query ? `Query: ${payload.query}` : "Latest active markets";
+    marketMetaEl.textContent = `${queryLabel} | ${rows.length} cards | updated ${fetchedAt}`;
+    renderMarketCards(rows);
+    if (announce) {
+      setMeta("Market cards refreshed.");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    marketMetaEl.textContent = `Market feed error: ${message}`;
+    marketCardsEl.innerHTML = `<div class="market-card empty-card"><p class="line-body">Could not load market data.</p></div>`;
+  }
+}
+
+function renderMarketCards(items) {
+  if (!marketCardsEl) {
+    return;
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    marketCardsEl.innerHTML = `<div class="market-card empty-card"><p class="line-body">No matching markets right now.</p></div>`;
+    return;
+  }
+
+  const cards = items.map((item) => {
+    const probability = toPercent(item.probabilityPercent, item.probability);
+    const volume24 = toCurrencyLike(item.volume24Hours);
+    const liquidity = toCurrencyLike(item.totalLiquidity);
+    const close = formatMaybeDate(item.closeTime);
+    const status = item.isResolved ? `resolved: ${String(item.resolution || "resolved")}` : "open";
+
+    return `
+      <article class="market-card">
+        <p class="market-card-title">${escapeHtml(item.question || "Untitled market")}</p>
+        <p class="market-card-meta">P=${escapeHtml(probability)} | vol24=${escapeHtml(volume24)} | liquidity=${escapeHtml(liquidity)}</p>
+        <p class="market-card-meta">${escapeHtml(status)} | close=${escapeHtml(close)}</p>
+        <p class="market-card-link"><a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">Open Source Market</a></p>
+      </article>
+    `;
+  });
+
+  marketCardsEl.innerHTML = cards.join("");
+}
+
+function deriveMarketQuery(task) {
+  const stop = new Set([
+    "the", "and", "for", "that", "with", "from", "will", "this", "what", "when", "where", "which", "into", "about",
+    "room", "task", "debate", "discussion", "agent", "agents", "market", "markets", "question", "questions"
+  ]);
+  const tokens = String(task || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stop.has(token));
+  return Array.from(new Set(tokens)).slice(0, 6).join(" ");
+}
+
+function toPercent(probabilityPercent, probabilityRaw) {
+  const value = probabilityPercent == null ? Number.NaN : Number(probabilityPercent);
+  if (Number.isFinite(value)) {
+    return `${value.toFixed(1)}%`;
+  }
+  const probability = probabilityRaw == null ? Number.NaN : Number(probabilityRaw);
+  if (Number.isFinite(probability)) {
+    return `${(probability * 100).toFixed(1)}%`;
+  }
+  return "n/a";
+}
+
+function toCurrencyLike(valueRaw) {
+  const value = Number(valueRaw);
+  if (!Number.isFinite(value)) {
+    return "n/a";
+  }
+  return value.toFixed(1);
+}
+
+function formatMaybeDate(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "n/a";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 function renderJoinedAgents(connectedAgents) {
   joinedAgentListEl.innerHTML = "";
   if (!Array.isArray(connectedAgents) || connectedAgents.length === 0) {
@@ -598,6 +721,7 @@ function renderRoomBrief(brief) {
     brief.agentInstructions || "",
     "",
     `PYTHON: ${brief.pythonNote || ""}`,
+    `MARKET DATA: ${brief.marketDataNote || ""}`,
     "",
     "=== ENDPOINTS ===",
     `Room page: ${brief.roomPageUrl}`,
@@ -605,6 +729,9 @@ function renderRoomBrief(brief) {
     `POST join agent: ${brief.joinAgentApi}`,
     `POST send message: ${brief.postMessageApi}`,
     `POST python job: ${brief.pythonJobsApi}`,
+    `GET market cards: ${brief.marketDataMarketsApi || "-"}`,
+    `GET market detail: ${brief.marketDataMarketApi || "-"}`,
+    `GET market comments: ${brief.marketDataCommentsApi || "-"}`,
     "",
     "=== JOIN PAYLOAD ===",
     JSON.stringify(brief.sampleJoinPayload || {}, null, 2),
@@ -619,6 +746,9 @@ function renderRoomBrief(brief) {
     "",
     "=== PYTHON JOB PAYLOAD ===",
     JSON.stringify(brief.samplePythonPayload || {}, null, 2),
+    "",
+    "=== MARKET DATA REQUEST ===",
+    JSON.stringify(brief.sampleMarketDataRequest || {}, null, 2),
     "",
     "IMPORTANT: if task requires calculations/simulations, use Python Job API."
   ];
@@ -862,6 +992,9 @@ function renderRoomHeader(room, stats) {
   roomShellChipEl.textContent = `python_shell: ${
     room.settings?.pythonShellEnabled ? "on" : "off"
   }`;
+  if (roomMarketChipEl) {
+    roomMarketChipEl.textContent = `market_data: ${room.settings?.marketDataEnabled ? "read" : "off"}`;
+  }
   if (roomStatsBadgeEl) {
     const separator = " \u00B7 ";
     roomStatsBadgeEl.textContent = stats

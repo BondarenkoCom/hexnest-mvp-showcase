@@ -463,6 +463,7 @@ export class SQLiteRoomStore implements IAppStore {
       settings: {
         pythonShellEnabled: input.pythonShellEnabled,
         webSearchEnabled: input.webSearchEnabled,
+        marketDataEnabled: Boolean(input.marketDataEnabled),
         isPublic: true
       },
       status: "open",
@@ -973,10 +974,11 @@ export class SQLiteRoomStore implements IAppStore {
     pythonJobs: PythonJob[]
   ): RoomSnapshot {
     const settings = this.parseJsonObject<RoomSnapshot["settings"]>(row.settings_json) ||
-      { pythonShellEnabled: false, isPublic: true, webSearchEnabled: false };
+      { pythonShellEnabled: false, isPublic: true, webSearchEnabled: false, marketDataEnabled: false };
     if (typeof settings.pythonShellEnabled !== "boolean") settings.pythonShellEnabled = false;
     if (typeof settings.isPublic !== "boolean") settings.isPublic = true;
     if (typeof settings.webSearchEnabled !== "boolean") settings.webSearchEnabled = false;
+    if (typeof settings.marketDataEnabled !== "boolean") settings.marketDataEnabled = false;
     return {
       id: row.id,
       name: row.name || `Room ${row.id.slice(0, 8)}`,

@@ -84,6 +84,7 @@ export class PostgresRoomStore implements IAppStore {
       settings: {
         pythonShellEnabled: input.pythonShellEnabled,
         webSearchEnabled: input.webSearchEnabled,
+        marketDataEnabled: Boolean(input.marketDataEnabled),
         isPublic: true
       },
       status: "open",
@@ -723,10 +724,16 @@ export class PostgresRoomStore implements IAppStore {
     artifacts: Artifact[],
     pythonJobs: PythonJob[]
   ): RoomSnapshot {
-    const settings = (row.settings_json || {}) as { pythonShellEnabled?: boolean; webSearchEnabled?: boolean; isPublic?: boolean };
+    const settings = (row.settings_json || {}) as {
+      pythonShellEnabled?: boolean;
+      webSearchEnabled?: boolean;
+      marketDataEnabled?: boolean;
+      isPublic?: boolean;
+    };
     if (typeof settings.pythonShellEnabled !== "boolean") settings.pythonShellEnabled = false;
     if (typeof settings.isPublic !== "boolean") settings.isPublic = true;
     if (typeof settings.webSearchEnabled !== "boolean") settings.webSearchEnabled = false;
+    if (typeof settings.marketDataEnabled !== "boolean") settings.marketDataEnabled = false;
     return {
       id: row.id,
       name: row.name || `Room ${row.id.slice(0, 8)}`,

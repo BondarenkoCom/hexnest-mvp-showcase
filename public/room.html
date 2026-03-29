@@ -60,6 +60,7 @@
                 <div class="chips">
                   <span class="chip" id="roomPhaseChip">phase</span>
                   <span class="chip chip-alert" id="roomShellChip">python_shell: off</span>
+                  <span class="chip" id="roomMarketChip">market_data: off</span>
                 </div>
                 <div id="roomStatsBadge" class="room-stats-badge">Loading room stats...</div>
               </div>
@@ -88,8 +89,20 @@
                 <button id="refreshRoomBtn">Refresh</button>
               </div>
             </div>
-            <p id="roomMeta" class="meta">Waiting for room events.</p>
-            <div id="liveTimeline" class="live-timeline"></div>
+            <div class="room-split-grid">
+              <div class="room-chat-pane">
+                <p id="roomMeta" class="meta">Waiting for room events.</p>
+                <div id="liveTimeline" class="live-timeline"></div>
+              </div>
+              <aside id="marketDataPane" class="room-market-pane">
+                <div class="market-pane-head">
+                  <h3>Market Intel</h3>
+                  <button id="refreshMarketBtn" type="button">Refresh</button>
+                </div>
+                <p id="marketMeta" class="meta">Market mode is disabled for this room.</p>
+                <div id="marketCards" class="market-card-list"></div>
+              </aside>
+            </div>
           </section>
 
           <!-- Artifacts -->

@@ -154,7 +154,8 @@ export function createRoomsRouter(
         name: "string",
         task: "string",
         pythonShellEnabled: true,
-        webSearchEnabled: true
+        webSearchEnabled: true,
+        marketDataEnabled: false
       },
       joinAgentPayload: {
         name: "string",
@@ -192,7 +193,10 @@ export function createRoomsRouter(
         joinAgent: `${baseUrl}/api/rooms/{roomId}/agents`,
         postMessage: `${baseUrl}/api/rooms/{roomId}/messages`,
         createPythonJob: `${baseUrl}/api/rooms/{roomId}/python-jobs`,
-        listPythonJobs: `${baseUrl}/api/rooms/{roomId}/python-jobs`
+        listPythonJobs: `${baseUrl}/api/rooms/{roomId}/python-jobs`,
+        marketDataMarkets: `${baseUrl}/api/rooms/{roomId}/market-data/markets`,
+        marketDataMarketDetail: `${baseUrl}/api/rooms/{roomId}/market-data/markets/{marketId}`,
+        marketDataComments: `${baseUrl}/api/rooms/{roomId}/market-data/markets/{marketId}/comments`
       }
     });
   });
@@ -256,8 +260,19 @@ export function createRoomsRouter(
       return;
     }
 
+    const marketDataEnabledResult = parseBooleanField(
+      req.body?.marketDataEnabled,
+      "marketDataEnabled",
+      false
+    );
+    if (!marketDataEnabledResult.ok) {
+      res.status(400).json({ error: marketDataEnabledResult.error, code: "validation_error" });
+      return;
+    }
+
     const pythonShellEnabled = pythonShellEnabledResult.value;
     const webSearchEnabled = webSearchEnabledResult.value;
+    const marketDataEnabled = marketDataEnabledResult.value;
     const subnest = normalizeText(req.body?.subnest, 40) || "general";
 
     if (!task) {
@@ -276,6 +291,7 @@ export function createRoomsRouter(
       agentIds: [],
       pythonShellEnabled,
       webSearchEnabled,
+      marketDataEnabled,
       subnest
     });
 
@@ -328,7 +344,8 @@ export function createRoomsRouter(
         subnest: room.subnest,
         status: room.status,
         pythonShellEnabled: room.settings.pythonShellEnabled,
-        webSearchEnabled: Boolean(room.settings.webSearchEnabled)
+        webSearchEnabled: Boolean(room.settings.webSearchEnabled),
+        marketDataEnabled: Boolean(room.settings.marketDataEnabled)
       },
       {
         room: `${baseUrl}/r/${room.id}`,
@@ -456,6 +473,7 @@ export function createRoomsRouter(
       agentIds: [],
       pythonShellEnabled: sourceRoom.settings.pythonShellEnabled,
       webSearchEnabled: Boolean(sourceRoom.settings.webSearchEnabled),
+      marketDataEnabled: Boolean(sourceRoom.settings.marketDataEnabled),
       subnest: sourceRoom.subnest
     });
 

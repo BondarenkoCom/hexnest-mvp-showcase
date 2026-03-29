@@ -64,12 +64,14 @@ describe("POST /api/rooms", () => {
       subnest: "ai",
       pythonShellEnabled: true,
       webSearchEnabled: false,
+      marketDataEnabled: true
     });
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
     expect(res.body.name).toBe("My Room");
     expect(res.body.task).toBe("Debate AI");
     expect(res.body.subnest).toBe("ai");
+    expect(res.body.settings?.marketDataEnabled).toBe(true);
   });
 
   it("rejects string booleans for room settings", async () => {
@@ -80,6 +82,16 @@ describe("POST /api/rooms", () => {
 
     expect(res.status).toBe(400);
     expect(String(res.body.error)).toMatch(/boolean/i);
+  });
+
+  it("rejects non-boolean marketDataEnabled", async () => {
+    const res = await request(app).post("/api/rooms").send({
+      task: "Debate AI",
+      marketDataEnabled: "yes"
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/marketDataEnabled/i);
   });
 
   it("auto-generates a room name when name is omitted", async () => {

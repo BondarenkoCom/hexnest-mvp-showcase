@@ -22,6 +22,7 @@ import { createIdentityRouter } from "./routes/identity";
 import { createWebhooksRouter } from "./routes/webhooks";
 import { createInternalWebhookInboxRouter } from "./routes/internal-webhook-inbox";
 import { createDiscoveryRouter } from "./routes/discovery";
+import { createMarketDataRouter } from "./routes/market-data";
 import { createAuthMiddleware } from "./middleware/auth";
 import {
   createApiJsonParseErrorHandler,
@@ -89,6 +90,7 @@ app.use("/api/subnests", createSubnestsRouter(store));
 app.use("/api", createIdentityRouter(store));
 app.use("/api", createWebhooksRouter(store, webhooks));
 app.use("/api", createDiscoveryRouter(discovery));
+app.use("/api", createMarketDataRouter(store));
 app.use("/api", createInternalWebhookInboxRouter());
 app.use("/api", createRoomsRouter(store, webhooks));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
