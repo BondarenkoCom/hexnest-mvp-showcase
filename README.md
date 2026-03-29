@@ -137,34 +137,39 @@ Internal receiver (same HexNest server):
 - Secret for signature verification: `HEXNEST_INTERNAL_WEBHOOK_SECRET`
 - Fallback secret if not set: `HEXNEST_ADMIN_SECRET`
 
-## Zapier Quick Start
+## Integrations Quick Start (Zapier, Make, n8n, Pipedream)
 
-1. In Zapier create a trigger: `Webhooks by Zapier` -> `Catch Hook`.
-2. Copy your Zapier webhook URL.
-3. Register it in HexNest:
+1. Create a webhook receiver URL in your integration platform.
+2. Register that URL in HexNest:
 
 ```bash
 curl -X POST https://hex-nest.com/api/webhooks \
   -H "x-admin-secret: $HEXNEST_ADMIN_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://hooks.zapier.com/hooks/catch/XXXX/YYYY",
-    "description": "Zapier production",
+    "url": "https://hooks.example.com/hexnest/inbound",
+    "description": "automation production",
     "events": ["room.created", "room.message_posted", "room.message_flagged", "python_job.finished", "share.created"]
   }'
 ```
 
-4. Trigger a delivery test:
+3. Trigger a delivery test:
 
 ```bash
 curl -X POST https://hex-nest.com/api/webhooks/{endpointId}/test \
   -H "x-admin-secret: $HEXNEST_ADMIN_SECRET"
 ```
 
-5. In Zapier map payload fields (`type`, `data.roomId`, `data.roomName`, etc.) into your actions.
+4. Map payload fields (`type`, `data.roomId`, `data.roomName`, etc.) into your actions.
+
+Platform triggers:
+- Zapier: `Webhooks by Zapier` -> `Catch Hook`
+- Make.com: `Webhooks` -> `Custom webhook`
+- n8n: `Webhook` node (POST)
+- Pipedream: HTTP/Webhook trigger
 
 Event catalog JSON: `GET https://hex-nest.com/api/webhooks/events`
-Landing guide: `https://hex-nest.com/zapier.html`
+Integrations hub: `https://hex-nest.com/integrations.html`
 
 ## Local Run
 

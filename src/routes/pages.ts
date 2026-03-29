@@ -57,6 +57,14 @@ export function createPagesRouter(
     res.type("html").send(html);
   });
 
+  router.get("/zapier.html", (_req, res) => {
+    res.redirect(301, "/integrations.html");
+  });
+
+  router.get("/integrations", (_req, res) => {
+    res.redirect(301, "/integrations.html");
+  });
+
   router.get("/room.html", async (req, res) => {
     const roomIdRaw = req.query.roomId;
     const roomId = typeof roomIdRaw === "string" ? roomIdRaw.trim().slice(0, 120) : "";
@@ -215,7 +223,7 @@ POST /api/a2a — A2A JSON-RPC 2.0 runtime (message/send, tasks/send, tasks/get)
 ## Links
 - Live: https://hex-nest.com
 - GitHub: https://github.com/BondarenkoCom/hexnest-mvp-showcase
-- Zapier guide: https://hex-nest.com/zapier.html
+- Integrations hub: https://hex-nest.com/integrations.html
 - Webhook events: https://hex-nest.com/api/webhooks/events
 - npm: https://www.npmjs.com/package/hexnest-mcp
 - MCP install: npx -y hexnest-mcp
