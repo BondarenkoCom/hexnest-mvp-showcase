@@ -23,8 +23,12 @@ import {
   buildRoomKnowledgeExport
 } from "../utils/room-builders";
 import { getSubNest } from "../config/subnests";
+import { WebhookPublisher } from "../webhooks/WebhookPublisher";
 
-export function createRoomsRouter(store: IAppStore): express.Router {
+export function createRoomsRouter(
+  store: IAppStore,
+  webhooks?: WebhookPublisher
+): express.Router {
   const router = express.Router();
 
   // ── Health & Stats ──
@@ -252,8 +256,40 @@ export function createRoomsRouter(store: IAppStore): express.Router {
       }
       if (dirAgents.length > 0) {
         await store.saveRoom(room);
+        const baseUrl = getCanonicalPublicBaseUrl();
+        for (const joined of room.connectedAgents) {
+          webhooks?.publish(
+            "room.agent_joined",
+            {
+              roomId: room.id,
+              roomName: room.name,
+              agentId: joined.id,
+              agentName: joined.name,
+              owner: joined.owner
+            },
+            { room: `${baseUrl}/r/${room.id}` }
+          );
+        }
       }
     }
+
+    const baseUrl = getCanonicalPublicBaseUrl();
+    webhooks?.publish(
+      "room.created",
+      {
+        roomId: room.id,
+        roomName: room.name,
+        task: room.task,
+        subnest: room.subnest,
+        status: room.status,
+        pythonShellEnabled: room.settings.pythonShellEnabled,
+        webSearchEnabled: Boolean(room.settings.webSearchEnabled)
+      },
+      {
+        room: `${baseUrl}/r/${room.id}`,
+        roomApi: `${baseUrl}/api/rooms/${room.id}`
+      }
+    );
 
     res.status(201).json(room);
   });
@@ -290,6 +326,13 @@ export function createRoomsRouter(store: IAppStore): express.Router {
       return;
     }
 
+    const baseUrl = getCanonicalPublicBaseUrl();
+    webhooks?.publish(
+      "room.deleted",
+      { roomId: req.params.roomId },
+      { rooms: `${baseUrl}/api/rooms` }
+    );
+
     res.json({
       ok: true,
       deleted: "room",
@@ -303,6 +346,12 @@ export function createRoomsRouter(store: IAppStore): express.Router {
       res.status(404).json({ error: "room not found" });
       return;
     }
+    const baseUrl = getCanonicalPublicBaseUrl();
+    webhooks?.publish(
+      "room.deleted",
+      { roomId: req.params.id },
+      { rooms: `${baseUrl}/api/rooms` }
+    );
     res.json({ ok: true, deleted: "room", roomId: req.params.id });
   });
 
@@ -468,6 +517,19 @@ export function createRoomsRouter(store: IAppStore): express.Router {
     room.status = "open";
     await store.saveRoom(room);
 
+    const baseUrl = getCanonicalPublicBaseUrl();
+    webhooks?.publish(
+      "room.agent_joined",
+      {
+        roomId: room.id,
+        roomName: room.name,
+        agentId: joinedAgent.id,
+        agentName: joinedAgent.name,
+        owner: joinedAgent.owner || ""
+      },
+      { room: `${baseUrl}/r/${room.id}` }
+    );
+
     res.status(201).json({
       joinedAgent,
       roomId: room.id,
@@ -531,9 +593,23 @@ export function createRoomsRouter(store: IAppStore): express.Router {
 
     try {
       const sharedLink = await store.getOrCreateSharedLink(room.id, message.id, shortCode);
+      const baseUrl = getCanonicalPublicBaseUrl();
+      webhooks?.publish(
+        "share.created",
+        {
+          roomId: room.id,
+          messageId: message.id,
+          shortCode: sharedLink.shortCode,
+          fromAgent: message.envelope.from_agent
+        },
+        {
+          room: `${baseUrl}/r/${room.id}`,
+          share: `${baseUrl}/s/${sharedLink.shortCode}`
+        }
+      );
       res.json({
         shortCode: sharedLink.shortCode,
-        url: `${getCanonicalPublicBaseUrl()}/s/${sharedLink.shortCode}`
+        url: `${baseUrl}/s/${sharedLink.shortCode}`
       });
     } catch (error) {
       const messageText = error instanceof Error ? error.message : String(error);
@@ -637,6 +713,48 @@ export function createRoomsRouter(store: IAppStore): express.Router {
     room.timeline.push(event);
     room.status = "open";
     await store.saveRoom(room);
+
+    const baseUrl = getCanonicalPublicBaseUrl();
+    webhooks?.publish(
+      "room.message_posted",
+      {
+        roomId: room.id,
+        roomName: room.name,
+        messageId: event.id,
+        messageType: event.envelope.message_type,
+        fromAgent: event.envelope.from_agent,
+        toAgent: event.envelope.to_agent,
+        scope: event.envelope.scope,
+        intent: event.envelope.intent,
+        needHuman: event.envelope.need_human,
+        status: event.envelope.status,
+        text: event.envelope.explanation
+      },
+      {
+        room: `${baseUrl}/r/${room.id}`,
+        roomApi: `${baseUrl}/api/rooms/${room.id}`
+      }
+    );
+
+    if (event.envelope.need_human || event.envelope.status === "needs_input" || event.envelope.status === "blocked") {
+      webhooks?.publish(
+        "room.message_flagged",
+        {
+          roomId: room.id,
+          roomName: room.name,
+          messageId: event.id,
+          fromAgent: event.envelope.from_agent,
+          status: event.envelope.status,
+          needHuman: event.envelope.need_human,
+          text: event.envelope.explanation
+        },
+        {
+          room: `${baseUrl}/r/${room.id}`,
+          roomApi: `${baseUrl}/api/rooms/${room.id}`
+        }
+      );
+    }
+
     res.status(201).json(event);
   });
 

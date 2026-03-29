@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "crypto";
 import {
   AgentEnvelope,
   Artifact,
+  CreateWebhookEndpointInput,
   ConnectedAgent,
   DirectoryAgent,
   PlatformAgent,
@@ -15,6 +16,9 @@ import {
   RoomSnapshot,
   RoomStatus,
   SharedLink,
+  UpdateWebhookEndpointInput,
+  WebhookEndpoint,
+  WebhookEventType,
   WebSearchJob
 } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
@@ -65,6 +69,11 @@ export class SQLiteRoomStore implements IAppStore {
   private readonly getPythonJobsStmt: any;
   private readonly upsertPythonJobStmt: any;
   private readonly deletePythonJobsByRoomStmt: any;
+  private readonly insertWebhookEndpointStmt: any;
+  private readonly listWebhookEndpointsStmt: any;
+  private readonly getWebhookEndpointStmt: any;
+  private readonly deleteWebhookEndpointStmt: any;
+  private readonly markWebhookDeliveryStmt: any;
 
   constructor(dbPath: string) {
     const normalizedPath = path.resolve(dbPath);
@@ -209,6 +218,22 @@ export class SQLiteRoomStore implements IAppStore {
       CREATE INDEX IF NOT EXISTS idx_room_python_jobs_room_id ON room_python_jobs(room_id);
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS webhook_endpoints (
+        id TEXT PRIMARY KEY,
+        url TEXT NOT NULL,
+        secret TEXT NOT NULL,
+        events_json TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        description TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_delivery_at TEXT,
+        last_error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhook_endpoints_active ON webhook_endpoints(active);
+    `);
+
     // Migration: add category column if missing (existing DBs)
     try {
       this.db.exec(`ALTER TABLE agent_directory ADD COLUMN category TEXT NOT NULL DEFAULT 'utility'`);
@@ -325,6 +350,43 @@ export class SQLiteRoomStore implements IAppStore {
 
     this.deletePythonJobsByRoomStmt = this.db.prepare(`
       DELETE FROM room_python_jobs WHERE room_id = @roomId
+    `);
+
+    this.insertWebhookEndpointStmt = this.db.prepare(`
+      INSERT INTO webhook_endpoints (
+        id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error
+      )
+      VALUES (
+        @id, @url, @secret, @eventsJson, @active, @description, @createdAt, @updatedAt, @lastDeliveryAt, @lastError
+      )
+    `);
+
+    this.listWebhookEndpointsStmt = this.db.prepare(`
+      SELECT
+        id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error
+      FROM webhook_endpoints
+      ORDER BY created_at ASC
+    `);
+
+    this.getWebhookEndpointStmt = this.db.prepare(`
+      SELECT
+        id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error
+      FROM webhook_endpoints
+      WHERE id = @id
+      LIMIT 1
+    `);
+
+    this.deleteWebhookEndpointStmt = this.db.prepare(`
+      DELETE FROM webhook_endpoints WHERE id = @id
+    `);
+
+    this.markWebhookDeliveryStmt = this.db.prepare(`
+      UPDATE webhook_endpoints
+      SET
+        last_delivery_at = @lastDeliveryAt,
+        last_error = @lastError,
+        updated_at = @updatedAt
+      WHERE id = @id
     `);
 
     this.insertAgentDirStmt = this.db.prepare(`
@@ -723,6 +785,103 @@ export class SQLiteRoomStore implements IAppStore {
     });
   }
 
+  public async createWebhookEndpoint(input: CreateWebhookEndpointInput): Promise<WebhookEndpoint> {
+    const now = nowIso();
+    const endpoint: WebhookEndpoint = {
+      id: newId(),
+      url: String(input.url || "").trim(),
+      secret: String(input.secret || "").trim(),
+      events: Array.isArray(input.events) ? input.events : [],
+      active: input.active !== false,
+      description: String(input.description || "").trim(),
+      createdAt: now,
+      updatedAt: now
+    };
+    this.insertWebhookEndpointStmt.run({
+      id: endpoint.id,
+      url: endpoint.url,
+      secret: endpoint.secret,
+      eventsJson: JSON.stringify(endpoint.events),
+      active: endpoint.active ? 1 : 0,
+      description: endpoint.description,
+      createdAt: endpoint.createdAt,
+      updatedAt: endpoint.updatedAt,
+      lastDeliveryAt: null,
+      lastError: null
+    });
+    return Promise.resolve(endpoint);
+  }
+
+  public async listWebhookEndpoints(): Promise<WebhookEndpoint[]> {
+    const rows = this.listWebhookEndpointsStmt.all() as WebhookEndpointSqlRow[];
+    return Promise.resolve(rows.map((row) => this.mapWebhookEndpoint(row)));
+  }
+
+  public async getWebhookEndpoint(endpointId: string): Promise<WebhookEndpoint | null> {
+    const row = this.getWebhookEndpointStmt.get({ id: endpointId }) as WebhookEndpointSqlRow | undefined;
+    if (!row) return Promise.resolve(null);
+    return Promise.resolve(this.mapWebhookEndpoint(row));
+  }
+
+  public async updateWebhookEndpoint(
+    endpointId: string,
+    patch: UpdateWebhookEndpointInput
+  ): Promise<WebhookEndpoint | null> {
+    const current = await this.getWebhookEndpoint(endpointId);
+    if (!current) {
+      return null;
+    }
+    const updated: WebhookEndpoint = {
+      ...current,
+      url: typeof patch.url === "string" ? patch.url.trim() : current.url,
+      secret: typeof patch.secret === "string" ? patch.secret.trim() : current.secret,
+      events: Array.isArray(patch.events) ? patch.events : current.events,
+      active: typeof patch.active === "boolean" ? patch.active : current.active,
+      description: typeof patch.description === "string" ? patch.description.trim() : current.description,
+      updatedAt: nowIso()
+    };
+
+    this.db.prepare(`
+      UPDATE webhook_endpoints
+      SET
+        url = @url,
+        secret = @secret,
+        events_json = @eventsJson,
+        active = @active,
+        description = @description,
+        updated_at = @updatedAt
+      WHERE id = @id
+    `).run({
+      id: endpointId,
+      url: updated.url,
+      secret: updated.secret,
+      eventsJson: JSON.stringify(updated.events),
+      active: updated.active ? 1 : 0,
+      description: updated.description,
+      updatedAt: updated.updatedAt
+    });
+
+    return updated;
+  }
+
+  public async deleteWebhookEndpoint(endpointId: string): Promise<boolean> {
+    const result = this.deleteWebhookEndpointStmt.run({ id: endpointId }) as { changes?: number } | undefined;
+    return Promise.resolve(Number(result?.changes || 0) > 0);
+  }
+
+  public async markWebhookDelivery(
+    endpointId: string,
+    deliveredAt: string,
+    error: string | null = null
+  ): Promise<void> {
+    this.markWebhookDeliveryStmt.run({
+      id: endpointId,
+      lastDeliveryAt: deliveredAt,
+      lastError: error || null,
+      updatedAt: nowIso()
+    });
+  }
+
   public async deleteRoom(roomId: string): Promise<boolean> {
     this.deleteTimelineByRoomStmt.run({ roomId });
     this.deleteArtifactsByRoomStmt.run({ roomId });
@@ -958,6 +1117,33 @@ export class SQLiteRoomStore implements IAppStore {
     return token.slice(0, SQLiteRoomStore.TOKEN_PREFIX_LENGTH);
   }
 
+  private mapWebhookEndpoint(row: WebhookEndpointSqlRow): WebhookEndpoint {
+    return {
+      id: row.id,
+      url: row.url,
+      secret: row.secret,
+      events: this.parseWebhookEvents(row.events_json),
+      active: Boolean(row.active),
+      description: row.description || "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastDeliveryAt: row.last_delivery_at || undefined,
+      lastError: row.last_error || undefined
+    };
+  }
+
+  private parseWebhookEvents(raw: string): WebhookEventType[] {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => String(item || "").trim())
+        .filter(Boolean) as WebhookEventType[];
+    } catch {
+      return [];
+    }
+  }
+
   private mapSharedLink(row: SharedLinkRow): SharedLink {
     return {
       id: row.id,
@@ -1044,4 +1230,17 @@ interface TokenValidationSqlRow extends PlatformAgentSqlRow {
   scopes: string;
   expires_at: string;
   revoked_at: string | null;
+}
+
+interface WebhookEndpointSqlRow {
+  id: string;
+  url: string;
+  secret: string;
+  events_json: string;
+  active: number;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  last_delivery_at: string | null;
+  last_error: string | null;
 }

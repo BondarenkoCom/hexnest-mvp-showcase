@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import {
   AgentEnvelope,
   Artifact,
+  CreateWebhookEndpointInput,
   ConnectedAgent,
   DirectoryAgent,
   PlatformAgent,
@@ -14,6 +15,9 @@ import {
   RoomSnapshot,
   RoomStatus,
   SharedLink,
+  UpdateWebhookEndpointInput,
+  WebhookEndpoint,
+  WebhookEventType,
   WebSearchJob
 } from "../types/protocol";
 import { IAppStore, CreateRoomInput } from "../orchestration/RoomStore";
@@ -501,6 +505,121 @@ export class PostgresRoomStore implements IAppStore {
     );
   }
 
+  async createWebhookEndpoint(input: CreateWebhookEndpointInput): Promise<WebhookEndpoint> {
+    const now = nowIso();
+    const result = await this.pool.query<WebhookEndpointRow>(
+      `INSERT INTO webhook_endpoints (
+         id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL)
+       RETURNING
+         id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error`,
+      [
+        newId(),
+        String(input.url || "").trim(),
+        String(input.secret || "").trim(),
+        JSON.stringify(Array.isArray(input.events) ? input.events : []),
+        input.active !== false,
+        String(input.description || "").trim(),
+        now,
+        now
+      ]
+    );
+    return this.mapWebhookEndpoint(result.rows[0]);
+  }
+
+  async listWebhookEndpoints(): Promise<WebhookEndpoint[]> {
+    const result = await this.pool.query<WebhookEndpointRow>(
+      `SELECT
+         id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error
+       FROM webhook_endpoints
+       ORDER BY created_at ASC`
+    );
+    return result.rows.map((row) => this.mapWebhookEndpoint(row));
+  }
+
+  async getWebhookEndpoint(endpointId: string): Promise<WebhookEndpoint | null> {
+    const result = await this.pool.query<WebhookEndpointRow>(
+      `SELECT
+         id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error
+       FROM webhook_endpoints
+       WHERE id = $1
+       LIMIT 1`,
+      [endpointId]
+    );
+    if (result.rows.length === 0) return null;
+    return this.mapWebhookEndpoint(result.rows[0]);
+  }
+
+  async updateWebhookEndpoint(
+    endpointId: string,
+    patch: UpdateWebhookEndpointInput
+  ): Promise<WebhookEndpoint | null> {
+    const current = await this.getWebhookEndpoint(endpointId);
+    if (!current) {
+      return null;
+    }
+
+    const updated = {
+      url: typeof patch.url === "string" ? patch.url.trim() : current.url,
+      secret: typeof patch.secret === "string" ? patch.secret.trim() : current.secret,
+      events: Array.isArray(patch.events) ? patch.events : current.events,
+      active: typeof patch.active === "boolean" ? patch.active : current.active,
+      description: typeof patch.description === "string" ? patch.description.trim() : current.description,
+      updatedAt: nowIso()
+    };
+
+    const result = await this.pool.query<WebhookEndpointRow>(
+      `UPDATE webhook_endpoints
+       SET
+         url = $2,
+         secret = $3,
+         events_json = $4,
+         active = $5,
+         description = $6,
+         updated_at = $7
+       WHERE id = $1
+       RETURNING
+         id, url, secret, events_json, active, description, created_at, updated_at, last_delivery_at, last_error`,
+      [
+        endpointId,
+        updated.url,
+        updated.secret,
+        JSON.stringify(updated.events),
+        updated.active,
+        updated.description,
+        updated.updatedAt
+      ]
+    );
+
+    if (result.rows.length === 0) return null;
+    return this.mapWebhookEndpoint(result.rows[0]);
+  }
+
+  async deleteWebhookEndpoint(endpointId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `DELETE FROM webhook_endpoints WHERE id = $1`,
+      [endpointId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async markWebhookDelivery(
+    endpointId: string,
+    deliveredAt: string,
+    error: string | null = null
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE webhook_endpoints
+       SET
+         last_delivery_at = $2,
+         last_error = $3,
+         updated_at = $4
+       WHERE id = $1`,
+      [endpointId, deliveredAt, error, nowIso()]
+    );
+  }
+
   private async persist(room: RoomSnapshot): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -708,6 +827,21 @@ export class PostgresRoomStore implements IAppStore {
     };
   }
 
+  private mapWebhookEndpoint(row: WebhookEndpointRow): WebhookEndpoint {
+    return {
+      id: row.id,
+      url: row.url,
+      secret: row.secret,
+      events: this.parseWebhookEvents(row.events_json),
+      active: row.active,
+      description: row.description || "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastDeliveryAt: row.last_delivery_at || undefined,
+      lastError: row.last_error || undefined
+    };
+  }
+
   private parseJsonArray(raw: string): string[] {
     try {
       const parsed = JSON.parse(raw);
@@ -715,6 +849,18 @@ export class PostgresRoomStore implements IAppStore {
       return parsed
         .map((item) => String(item || "").trim())
         .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  private parseWebhookEvents(raw: string): WebhookEventType[] {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => String(item || "").trim())
+        .filter(Boolean) as WebhookEventType[];
     } catch {
       return [];
     }
@@ -800,4 +946,17 @@ interface TokenValidationRow extends PlatformAgentRow {
   scopes: string;
   expires_at: string;
   revoked_at: string | null;
+}
+
+interface WebhookEndpointRow {
+  id: string;
+  url: string;
+  secret: string;
+  events_json: string;
+  active: boolean;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  last_delivery_at: string | null;
+  last_error: string | null;
 }

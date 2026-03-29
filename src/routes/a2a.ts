@@ -2,12 +2,16 @@ import express, { Request } from "express";
 import { IAppStore } from "../orchestration/RoomStore";
 import { ConnectedAgent, RoomEvent } from "../types/protocol";
 import { newId, nowIso } from "../utils/ids";
-import { getPublicBaseUrl } from "../utils/html";
+import { getCanonicalPublicBaseUrl, getPublicBaseUrl } from "../utils/html";
 import { normalizeText, normalizeRoomName, normalizeConfidence } from "../utils/normalize";
 import { newSystemEvent } from "../utils/room-builders";
 import { getSubNest } from "../config/subnests";
+import { WebhookPublisher } from "../webhooks/WebhookPublisher";
 
-export function createA2ARouter(store: IAppStore): express.Router {
+export function createA2ARouter(
+  store: IAppStore,
+  webhooks?: WebhookPublisher
+): express.Router {
   const router = express.Router();
 
   router.post("/a2a", async (req, res) => {
@@ -29,10 +33,10 @@ export function createA2ARouter(store: IAppStore): express.Router {
     try {
       switch (method) {
         case "message/send":
-          await handleA2AMessageSend(req, res, id, params, store);
+          await handleA2AMessageSend(req, res, id, params, store, webhooks);
           return;
         case "tasks/send":
-          await handleA2ATasksSend(req, res, id, params, store);
+          await handleA2ATasksSend(req, res, id, params, store, webhooks);
           return;
         case "tasks/get":
           await handleA2ATasksGet(res, id, params, store);
@@ -65,7 +69,8 @@ async function handleA2AMessageSend(
   res: express.Response,
   rpcId: unknown,
   params: Record<string, unknown>,
-  store: IAppStore
+  store: IAppStore,
+  webhooks?: WebhookPublisher
 ): Promise<void> {
   const message = params.message || params;
   const text = normalizeText(
@@ -129,6 +134,7 @@ async function handleA2AMessageSend(
 
   const resolvedName = agentName || `A2A-Agent-${newId().slice(0, 6)}`;
   let agent = room.connectedAgents.find(a => a.name.toLowerCase() === resolvedName.toLowerCase());
+  let joinedNow = false;
 
   if (!agent) {
     agent = {
@@ -145,6 +151,7 @@ async function handleA2AMessageSend(
     room.timeline.push(
       newSystemEvent(room.id, "open_room", "agent_joined", `${resolvedName} joined via A2A`)
     );
+    joinedNow = true;
   }
 
   if (text) {
@@ -173,6 +180,41 @@ async function handleA2AMessageSend(
     room.status = "open";
     await store.saveRoom(room);
 
+    const baseUrl = getCanonicalPublicBaseUrl();
+    if (joinedNow) {
+      webhooks?.publish(
+        "room.agent_joined",
+        {
+          roomId: room.id,
+          roomName: room.name,
+          agentId: agent.id,
+          agentName: agent.name,
+          owner: agent.owner || ""
+        },
+        { room: `${baseUrl}/r/${room.id}` }
+      );
+    }
+    webhooks?.publish(
+      "room.message_posted",
+      {
+        roomId: room.id,
+        roomName: room.name,
+        messageId: event.id,
+        messageType: event.envelope.message_type,
+        fromAgent: event.envelope.from_agent,
+        toAgent: event.envelope.to_agent,
+        scope: event.envelope.scope,
+        intent: event.envelope.intent,
+        needHuman: event.envelope.need_human,
+        status: event.envelope.status,
+        text: event.envelope.explanation
+      },
+      {
+        room: `${baseUrl}/r/${room.id}`,
+        roomApi: `${baseUrl}/api/rooms/${room.id}`
+      }
+    );
+
     res.json({
       jsonrpc: "2.0",
       id: rpcId,
@@ -191,6 +233,20 @@ async function handleA2AMessageSend(
     });
   } else {
     await store.saveRoom(room);
+    if (joinedNow) {
+      const baseUrl = getCanonicalPublicBaseUrl();
+      webhooks?.publish(
+        "room.agent_joined",
+        {
+          roomId: room.id,
+          roomName: room.name,
+          agentId: agent.id,
+          agentName: agent.name,
+          owner: agent.owner || ""
+        },
+        { room: `${baseUrl}/r/${room.id}` }
+      );
+    }
     const chatMessages = room.timeline.filter(e => e.envelope.message_type === "chat");
     res.json({
       jsonrpc: "2.0",
@@ -226,7 +282,8 @@ async function handleA2ATasksSend(
   res: express.Response,
   rpcId: unknown,
   params: Record<string, unknown>,
-  store: IAppStore
+  store: IAppStore,
+  webhooks?: WebhookPublisher
 ): Promise<void> {
   const taskDef = (params.task || params) as Record<string, unknown>;
   const name = normalizeRoomName(taskDef.name ?? taskDef.title);
@@ -285,6 +342,37 @@ async function handleA2ATasksSend(
       newSystemEvent(room.id, "open_room", "agent_joined", `${agentName} created and joined via A2A`)
     );
     await store.saveRoom(room);
+  }
+
+  const webhookBaseUrl = getCanonicalPublicBaseUrl();
+  webhooks?.publish(
+    "room.created",
+    {
+      roomId: room.id,
+      roomName: room.name,
+      task: room.task,
+      subnest: room.subnest,
+      status: room.status,
+      pythonShellEnabled: room.settings.pythonShellEnabled,
+      webSearchEnabled: Boolean(room.settings.webSearchEnabled)
+    },
+    {
+      room: `${webhookBaseUrl}/r/${room.id}`,
+      roomApi: `${webhookBaseUrl}/api/rooms/${room.id}`
+    }
+  );
+  if (joinedAgent) {
+    webhooks?.publish(
+      "room.agent_joined",
+      {
+        roomId: room.id,
+        roomName: room.name,
+        agentId: joinedAgent.id,
+        agentName: joinedAgent.name,
+        owner: joinedAgent.owner || ""
+      },
+      { room: `${webhookBaseUrl}/r/${room.id}` }
+    );
   }
 
   const baseUrl = getPublicBaseUrl(req);

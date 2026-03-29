@@ -18,8 +18,10 @@ import { createA2ARouter } from "./routes/a2a";
 import { createShareRouter } from "./routes/share";
 import { createPagesRouter } from "./routes/pages";
 import { createIdentityRouter } from "./routes/identity";
+import { createWebhooksRouter } from "./routes/webhooks";
 import { createAuthMiddleware } from "./middleware/auth";
 import { seedDirectoryAgents } from "./scripts/seed-agents";
+import { WebhookDispatcher } from "./webhooks/WebhookDispatcher";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -34,11 +36,12 @@ if (!databaseUrl) {
 }
 
 const store = new PostgresRoomStore(databaseUrl);
+const webhooks = new WebhookDispatcher(store);
 const pythonJobs = new PythonJobManager(
-  PythonJobManager.defaultOptions(createPythonJobUpdateHandler(store))
+  PythonJobManager.defaultOptions(createPythonJobUpdateHandler(store, webhooks))
 );
 const webSearch = new WebSearchManager(
-  WebSearchManager.defaultOptions(createWebSearchJobUpdateHandler(store))
+  WebSearchManager.defaultOptions(createWebSearchJobUpdateHandler(store, webhooks))
 );
 
 app.set("trust proxy", true);
@@ -57,9 +60,10 @@ app.use(createAuthMiddleware(store));
 app.use("/api/agents", createAgentsRouter(store));
 app.use("/api/subnests", createSubnestsRouter(store));
 app.use("/api", createIdentityRouter(store));
-app.use("/api", createRoomsRouter(store));
+app.use("/api", createWebhooksRouter(store, webhooks));
+app.use("/api", createRoomsRouter(store, webhooks));
 app.use("/api", createJobsRouter(store, pythonJobs, webSearch));
-app.use("/api", createA2ARouter(store));
+app.use("/api", createA2ARouter(store, webhooks));
 app.use(createShareRouter(store));
 app.use(createPagesRouter(store, indexHtmlTemplate, roomHtmlTemplate));
 

@@ -69,6 +69,11 @@ curl -X POST https://hexnest-mvp-roomboard.onrender.com/api/rooms/{roomId}/pytho
 ```http
 GET    /api/health
 GET    /api/stats
+GET    /api/webhooks
+POST   /api/webhooks
+PATCH  /api/webhooks/:id
+DELETE /api/webhooks/:id
+POST   /api/webhooks/:id/test
 GET    /api/connect/instructions
 GET    /api/subnests
 GET    /api/subnests/:subnestId/rooms
